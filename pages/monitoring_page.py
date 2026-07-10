@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 
-from widgets.camera_placeholder import CameraPlaceholder
+from app_camera import AnkleCameraWidget
 from widgets.metric_card import MetricCard
 from widgets.status_badge import StatusBadge
 
@@ -69,7 +69,7 @@ class MonitoringPage(QWidget):
         back_btn = QPushButton("←  Kembali ke Daftar Responden")
         back_btn.setObjectName("BackBtn")
         back_btn.setCursor(Qt.PointingHandCursor)
-        back_btn.clicked.connect(self.navigate_back.emit)
+        back_btn.clicked.connect(self._on_back_clicked)
         nav_row.addWidget(back_btn)
         nav_row.addStretch()
         root.addLayout(nav_row)
@@ -162,9 +162,10 @@ class MonitoringPage(QWidget):
         )
         left_col.addWidget(cam_header)
 
-        self.camera = CameraPlaceholder()
+        self.camera = AnkleCameraWidget(camera_source=1, embedded=True)
         self.camera.setMinimumSize(460, 320)
         self.camera.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.camera.angle_updated.connect(self._on_angle_updated)
         left_col.addWidget(self.camera, stretch=1)
 
         # ── Control Buttons ───────────────────────────────────────────────
@@ -374,7 +375,7 @@ class MonitoringPage(QWidget):
         self._is_running = True
         self._elapsed_seconds = 0
         self._timer.start(1000)
-        self.camera.set_running(True)
+        self.camera.start_camera()
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.submit_btn.setEnabled(False)
@@ -383,13 +384,14 @@ class MonitoringPage(QWidget):
         self.status_strip.setStyleSheet(
             "font-size: 12px; color: #E74C3C; background: transparent; padding-top: 4px;"
         )
-        # Simulate some dummy angle updates
-        self.card_sudut.set_value("23.4")
+        # Sudut ankle sekarang di-update secara real-time lewat sinyal
+        # angle_updated dari AnkleCameraWidget (lihat _on_angle_updated).
+        self.card_sudut.set_value("—")
 
     def _on_stop(self):
         self._is_running = False
         self._timer.stop()
-        self.camera.set_running(False)
+        self.camera.stop_camera()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.submit_btn.setEnabled(True)
@@ -411,7 +413,7 @@ class MonitoringPage(QWidget):
         self._is_running = False
         self._elapsed_seconds = 0
         self._timer.stop()
-        self.camera.set_running(False)
+        self.camera.stop_camera()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.submit_btn.setEnabled(False)
@@ -428,8 +430,29 @@ class MonitoringPage(QWidget):
         minutes = self._elapsed_seconds // 60
         seconds = self._elapsed_seconds % 60
         self.card_waktu.set_value(f"{minutes:02d}:{seconds:02d}")
-        # Simulate slight angle variation for demo
-        import random
-        base = 23.4
-        variation = random.uniform(-2.5, 2.5)
-        self.card_sudut.set_value(f"{base + variation:.1f}")
+
+    # ── Camera integration ──────────────────────────────────────────────────
+    def _on_angle_updated(self, angle, side_label):
+        """Called every frame via AnkleCameraWidget.angle_updated.
+        Pushes the live ankle angle from pose_tracker.py into the metric card."""
+        if angle is None:
+            self.card_sudut.set_value("—")
+        else:
+            self.card_sudut.set_value(f"{angle:.1f}")
+
+    def _on_back_clicked(self):
+        """Make sure the camera thread is stopped before leaving this page,
+        since AnkleCameraWidget is a plain QWidget and won't get its own
+        closeEvent when this page is swapped out (e.g. in a QStackedWidget)."""
+        self.camera.stop_camera()
+        self.navigate_back.emit()
+
+    def stop_camera(self):
+        """Public passthrough so the host app (main window) can stop the
+        camera when the whole application is closing, e.g.:
+
+            def closeEvent(self, event):
+                self.monitoring_page.stop_camera()
+                super().closeEvent(event)
+        """
+        self.camera.stop_camera()
