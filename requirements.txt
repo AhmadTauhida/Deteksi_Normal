@@ -1,0 +1,17 @@
+# OpenCV untuk manipulasi gambar dan akses kamera
+opencv-python==4.9.0.80
+
+# MediaPipe untuk estimasi pose tubuh (Ankle Tracking)
+mediapipe==0.10.11
+
+# NumPy untuk komputasi matriks dan perhitungan vektor sudut
+numpy==1.26.4
+
+# SciPy untuk filter Butterworth / Moving Average (Anti-Getar)
+scipy==1.12.0
+
+# Matplotlib untuk visualisasi grafik hasil analisis (opsional)
+matplotlib==3.8.3
+
+# PySide6 untuk Framework GUI berbasis Qt dan QSS
+PySide6==6.6.2
