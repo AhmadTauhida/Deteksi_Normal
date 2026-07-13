@@ -1,12 +1,6 @@
 """
 widgets/respondent_dialog.py
-Modal dialog untuk menambah responden baru.
 
-Revisi:
-- Diperbesar (550 x 580 min) agar seluruh elemen tampil penuh tanpa terpotong.
-- ToggleChip diganti base class dari QAbstractButton -> QPushButton, karena
-  QAbstractButton tidak punya paintEvent bawaan sehingga stylesheet
-  (background/border) tidak pernah ter-render (invisible).
 """
 
 from PySide6.QtWidgets import (
@@ -20,6 +14,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QButtonGroup,
     QWidget,
+    QScrollArea,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QIntValidator
@@ -141,7 +136,10 @@ class RespondentDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Tambah Responden Baru")
-        self.setMinimumSize(520, 560)
+        # Diturunkan dari (520, 560) -> (420, 380) supaya dialog masih
+        # bisa di-resize kecil secara wajar; konten yang kepanjangan akan
+        # otomatis scroll (lihat QScrollArea di _build_ui).
+        self.setMinimumSize(420, 380)
         self.resize(560, 600)
         self.setObjectName("AppRoot")
         self._build_ui()
@@ -149,8 +147,12 @@ class RespondentDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_ui(self):
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setContentsMargins(16, 16, 16, 16)
         outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
 
         card = QFrame()
         card.setObjectName("DialogCard")
@@ -209,7 +211,7 @@ class RespondentDialog(QDialog):
         self.nama_input = QLineEdit()
         self.nama_input.setPlaceholderText("Masukkan nama lengkap responden...")
         self.nama_input.setFixedHeight(44)
-        self.nama_input.setMinimumWidth(300)
+        self.nama_input.setMinimumWidth(220)
         card_layout.addWidget(self.nama_input)
         card_layout.addSpacing(18)
 
@@ -224,7 +226,7 @@ class RespondentDialog(QDialog):
         self.umur_input.setPlaceholderText("Masukkan umur")
         self.umur_input.setValidator(QIntValidator(1, 150, self))
         self.umur_input.setFixedHeight(44)
-        self.umur_input.setMinimumWidth(200)
+        self.umur_input.setMinimumWidth(160)
         umur_row.addWidget(self.umur_input)
         umur_row.addStretch()
         card_layout.addLayout(umur_row)
@@ -279,7 +281,6 @@ class RespondentDialog(QDialog):
         st_row.addStretch()
         card_layout.addLayout(st_row)
 
-        card_layout.addStretch()
         card_layout.addSpacing(22)
 
         # -- Divider ----------------------------------------------------------
@@ -307,7 +308,8 @@ class RespondentDialog(QDialog):
         btn_row.addWidget(save_btn)
         card_layout.addLayout(btn_row)
 
-        outer.addWidget(card)
+        scroll.setWidget(card)
+        outer.addWidget(scroll)
 
     # -- Helpers ----------------------------------------------------------------
     @staticmethod

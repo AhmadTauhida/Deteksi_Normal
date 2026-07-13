@@ -1,10 +1,6 @@
 """
 pages/monitoring_page.py
-Monitoring page — layout direvisi mengikuti referensi:
-- Baris atas: card metrik (Sudut Ankle, Waktu Tempuh, Jarak Tempuh) sejajar horizontal.
-- Baris judul "Live Camera Feed" + tombol kontrol (Start/Stop/Submit/Export) di kanan.
-- Kamera full-width di bawahnya.
-Tidak ada perubahan warna/style — hanya penataan ulang layout.
+
 """
 
 from __future__ import annotations
@@ -13,6 +9,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QPushButton,
     QFrame,
@@ -37,6 +34,10 @@ class MonitoringPage(QWidget):
 
     navigate_back = Signal()
 
+    # ── Breakpoint (px) ──────────────────────────────────────────────────────
+    METRICS_BREAKPOINT = 820   # di bawah ini, card metrik ditumpuk 1 kolom
+    HEADER_BREAKPOINT = 760    # di bawah ini, tombol pindah ke baris sendiri
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._respondent: dict = {}
@@ -44,6 +45,13 @@ class MonitoringPage(QWidget):
         self._elapsed_seconds = 0
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick_timer)
+
+        # State breakpoint — dipakai resizeEvent supaya nggak rebuild
+        # layout terus-menerus di setiap event resize kalau lebar belum
+        # melewati ambang batas.
+        self._metrics_columns = 3
+        self._header_is_wide = True
+
         self._build_ui()
 
     # ── UI Construction ─────────────────────────────────────────────────────
@@ -143,10 +151,7 @@ class MonitoringPage(QWidget):
         root.addWidget(info_card)
         root.addSpacing(20)
 
-        # ── Baris Card Metrik (horizontal, sejajar di atas) ────────────────
-        metrics_row = QHBoxLayout()
-        metrics_row.setSpacing(16)
-
+        # ── Card Metrik (grid responsif: 3 kolom -> 1 kolom) ───────────────
         self.card_sudut = MetricCard(
             label="Sudut Ankle",
             value="—",
@@ -159,7 +164,7 @@ class MonitoringPage(QWidget):
         )
 
         # Jarak: tetap sebagai card input manual (QDoubleSpinBox), tapi
-        # ditata sejajar bersama card metrik lain di baris atas.
+        # ditata bersama card metrik lain dalam grid yang sama.
         jarak_card = QFrame()
         jarak_card.setObjectName("Card")
         jarak_layout = QVBoxLayout(jarak_card)
@@ -185,21 +190,20 @@ class MonitoringPage(QWidget):
         jarak_input_row.addWidget(self.jarak_input, stretch=1)
         jarak_layout.addLayout(jarak_input_row)
 
-        metrics_row.addWidget(self.card_sudut, stretch=1)
-        metrics_row.addWidget(self.card_waktu, stretch=1)
-        metrics_row.addWidget(jarak_card, stretch=1)
+        self._metric_widgets = [self.card_sudut, self.card_waktu, jarak_card]
 
-        root.addLayout(metrics_row)
+        self.metrics_grid = QGridLayout()
+        self.metrics_grid.setSpacing(16)
+        self._layout_metrics_grid(3)
+
+        root.addLayout(self.metrics_grid)
         root.addSpacing(20)
 
-        # ── Baris Judul "Live Camera Feed" + Tombol Kontrol (sejajar) ──────
-        cam_header_row = QHBoxLayout()
-        cam_header = QLabel("Live Camera Feed")
-        cam_header.setStyleSheet(
+        # ── Judul "Live Camera Feed" + Tombol Kontrol (container responsif) ─
+        self.cam_header_label = QLabel("Live Camera Feed")
+        self.cam_header_label.setStyleSheet(
             "font-size: 13px; font-weight: 700; color: #6B7A99; background: transparent;"
         )
-        cam_header_row.addWidget(cam_header)
-        cam_header_row.addStretch()
 
         self.start_btn = QPushButton("▶  Start")
         self.start_btn.setObjectName("SuccessBtn")
@@ -227,12 +231,12 @@ class MonitoringPage(QWidget):
         self.export_btn.setCursor(Qt.PointingHandCursor)
         self.export_btn.setEnabled(False)
 
-        cam_header_row.addWidget(self.start_btn)
-        cam_header_row.addWidget(self.stop_btn)
-        cam_header_row.addWidget(self.submit_btn)
-        cam_header_row.addWidget(self.export_btn)
+        self._cam_buttons = [self.start_btn, self.stop_btn, self.submit_btn, self.export_btn]
 
-        root.addLayout(cam_header_row)
+        self.cam_header_container = QWidget()
+        self._build_cam_header(wide=True)
+
+        root.addWidget(self.cam_header_container)
         root.addSpacing(8)
 
         # Status strip (di bawah baris judul+tombol, di atas kamera)
@@ -248,6 +252,75 @@ class MonitoringPage(QWidget):
         self.camera.setMinimumSize(400, 380)
         self.camera.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         root.addWidget(self.camera, stretch=1)
+
+    # ── Responsive layout helpers ────────────────────────────────────────────
+    def _layout_metrics_grid(self, columns: int):
+        """Susun ulang card metrik ke grid dengan jumlah kolom tertentu."""
+        for w in self._metric_widgets:
+            self.metrics_grid.removeWidget(w)
+        for i, w in enumerate(self._metric_widgets):
+            row, col = divmod(i, columns)
+            self.metrics_grid.addWidget(w, row, col)
+        for col in range(columns):
+            self.metrics_grid.setColumnStretch(col, 1)
+        self._metrics_columns = columns
+
+    def _build_cam_header(self, wide: bool):
+        """Bangun ulang baris judul+tombol: sejajar (wide) atau ditumpuk (narrow)."""
+        old_layout = self.cam_header_container.layout()
+        if old_layout is not None:
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                w = item.widget()
+                if w is not None:
+                    w.setParent(self.cam_header_container)
+                sub_layout = item.layout()
+                if sub_layout is not None:
+                    # btn_row (QHBoxLayout bersarang di mode narrow) juga
+                    # perlu dikosongkan dulu sebelum dibuang, dengan alasan
+                    # yang sama seperti di atas.
+                    while sub_layout.count():
+                        sub_item = sub_layout.takeAt(0)
+                        sub_w = sub_item.widget()
+                        if sub_w is not None:
+                            sub_w.setParent(self.cam_header_container)
+
+            # Sekarang old_layout sudah kosong (tidak ada widget di
+            # dalamnya), jadi aman untuk dibuang lewat idiom standar ini.
+            QWidget().setLayout(old_layout)
+
+        if wide:
+            layout = QHBoxLayout()
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.addWidget(self.cam_header_label)
+            layout.addStretch()
+            for btn in self._cam_buttons:
+                layout.addWidget(btn)
+        else:
+            layout = QVBoxLayout()
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(10)
+            layout.addWidget(self.cam_header_label)
+            btn_row = QHBoxLayout()
+            btn_row.setSpacing(8)
+            for btn in self._cam_buttons:
+                btn_row.addWidget(btn)
+            layout.addLayout(btn_row)
+
+        self.cam_header_container.setLayout(layout)
+        self._header_is_wide = wide
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = event.size().width()
+
+        columns = 1 if w < self.METRICS_BREAKPOINT else 3
+        if columns != self._metrics_columns:
+            self._layout_metrics_grid(columns)
+
+        wide = w >= self.HEADER_BREAKPOINT
+        if wide != self._header_is_wide:
+            self._build_cam_header(wide)
 
     # ── Public API ───────────────────────────────────────────────────────────
     def set_respondent(self, data: dict):

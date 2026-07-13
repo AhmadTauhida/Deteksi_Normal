@@ -1,7 +1,11 @@
 """
 main_window.py
 QMainWindow shell — sidebar dihapus, hanya QStackedWidget penuh.
-Sidebar tetap tersedia untuk Monitoring Page (konteks navigasi internalnya sendiri).
+
+Revisi responsivitas:
+- Minimum size diturunkan (900x640 -> 680x560) supaya breakpoint di
+  MonitoringPage & RespondentDialog benar-benar bisa kepakai saat window
+  di-resize kecil / di-snap ke setengah layar.
 """
 
 from __future__ import annotations
@@ -33,7 +37,12 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Bionic Foot — Sistem Pengukuran Sudut Ankle")
-        self.setMinimumSize(900, 640)
+
+        # Batas minimum diturunkan dari (900, 640) -> (680, 560) supaya
+        # window masih bisa di-resize wajar (misal di-snap ke setengah
+        # layar) tanpa konten kepotong, dan breakpoint responsif di
+        # MonitoringPage/RespondentDialog benar-benar aktif kepakai.
+        self.setMinimumSize(680, 560)
         self.resize(1200, 760)
 
         central = QWidget()

@@ -1,8 +1,6 @@
 """
 pages/main_page.py
-Main page — Daftar Responden dengan search, filter, tabel, dan tombol tambah.
-Revisi 2: Nama center, badge status tanpa kotak, jenis kelamin tanpa ikon,
-tombol Monitoring lebih menonjol dan mudah dikenali.
+
 """
 
 from __future__ import annotations
@@ -112,9 +110,13 @@ class MainPage(QWidget):
         self.search_bar.setObjectName("SearchBar")
         self.search_bar.setPlaceholderText("🔍  Cari nama responden...")
         self.search_bar.setFixedHeight(42)
-        self.search_bar.setMinimumWidth(300)
+        # Diturunkan dari 300 -> 160 dan dibuat Expanding supaya search bar
+        # yang menyusut duluan saat window dikecilin, bukan elemen lain di
+        # toolbar (filter label/combo) yang jadi berdesakan/terpotong.
+        self.search_bar.setMinimumWidth(160)
+        self.search_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_bar.textChanged.connect(self._apply_filters)
-        toolbar.addWidget(self.search_bar)
+        toolbar.addWidget(self.search_bar, stretch=1)
 
         filter_label = QLabel("Filter Status:")
         filter_label.setStyleSheet(
@@ -128,16 +130,22 @@ class MainPage(QWidget):
 
         toolbar.addWidget(filter_label)
         toolbar.addWidget(self.filter_combo)
-        toolbar.addStretch()
 
+        root.addLayout(toolbar)
+        root.addSpacing(8)
+
+        # Baris kecil untuk count_label — dipindah ke bawah toolbar (bukan
+        # ikut addStretch di baris yang sama) supaya toolbar utama nggak
+        # makin sesak saat window sempit.
+        count_row = QHBoxLayout()
+        count_row.addStretch()
         self.count_label = QLabel()
         self.count_label.setStyleSheet(
             "color: #9AA3B8; font-size: 12px; background: transparent;"
         )
-        toolbar.addWidget(self.count_label)
-
-        root.addLayout(toolbar)
-        root.addSpacing(16)
+        count_row.addWidget(self.count_label)
+        root.addLayout(count_row)
+        root.addSpacing(8)
 
         # ── Table ─────────────────────────────────────────────────────────
         self.table = QTableWidget()
@@ -154,7 +162,10 @@ class MainPage(QWidget):
         # Kolom Nama: mengisi sisa ruang
         hdr.setSectionResizeMode(COL_NAMA, QHeaderView.Stretch)
 
-        # Kolom lain: lebar tetap yang cukup
+        # Kolom lain: lebar tetap yang cukup. Kalau total lebar kolom fixed
+        # + minimum kolom Nama melebihi lebar window, QTableWidget otomatis
+        # menampilkan horizontal scrollbar (ScrollBarAsNeeded, default) —
+        # jadi ini sudah cukup responsif tanpa perlu logic tambahan.
         for col, w in [
             (COL_UMUR,   COL_UMUR_W),
             (COL_JK,     COL_JK_W),
