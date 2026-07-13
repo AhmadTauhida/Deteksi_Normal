@@ -3,9 +3,13 @@ pages/main_page.py
 Main page — Daftar Responden dengan search, filter, tabel, dan tombol tambah.
 Revisi 2: Nama center, badge status tanpa kotak, jenis kelamin tanpa ikon,
 tombol Monitoring lebih menonjol dan mudah dikenali.
+Revisi 3: Data diambil langsung dari MySQL (db_ankle_analysis) via DatabaseManager,
+tidak lagi memakai data dummy.
 """
 
 from __future__ import annotations
+
+from datetime import date, datetime
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -28,16 +32,8 @@ from PySide6.QtGui import QFont, QIcon
 from widgets.status_badge import StatusBadge
 from widgets.respondent_dialog import RespondentDialog
 
-# ── Dummy initial data ──────────────────────────────────────────────────────
-DUMMY_RESPONDENTS: list[dict] = [
-    {"nama": "Budi Santoso",    "umur": 45, "jenis_kelamin": "Laki-laki",  "status": "Normal"},
-    {"nama": "Siti Rahayu",     "umur": 38, "jenis_kelamin": "Perempuan",  "status": "Tidak Normal"},
-    {"nama": "Ahmad Fauzi",     "umur": 52, "jenis_kelamin": "Laki-laki",  "status": "Normal"},
-    {"nama": "Dewi Lestari",    "umur": 60, "jenis_kelamin": "Perempuan",  "status": "Tidak Normal"},
-    {"nama": "Hendra Wijaya",   "umur": 33, "jenis_kelamin": "Laki-laki",  "status": "Normal"},
-    {"nama": "Rina Kusumawati", "umur": 41, "jenis_kelamin": "Perempuan",  "status": "Normal"},
-    {"nama": "Joko Susilo",     "umur": 57, "jenis_kelamin": "Laki-laki",  "status": "Tidak Normal"},
-]
+# 🚀 IMPORT DATABASE MANAGER
+from database.database_manager import DatabaseManager
 
 COL_NAMA, COL_UMUR, COL_JK, COL_STATUS, COL_AKSI = 0, 1, 2, 3, 4
 
@@ -46,6 +42,23 @@ COL_UMUR_W   = 90    # "60 thn" → cukup 90
 COL_JK_W     = 130   # "Perempuan" (tanpa ikon) → 130
 COL_STATUS_W = 130   # "Tidak Normal" teks polos → 130
 COL_AKSI_W   = 190   # tombol Monitoring baru, lebih lega → 190 (cukup untuk ikon + teks + padding)
+
+
+def hitung_usia(tanggal_lahir_obj) -> int:
+    """Mengubah tanggal_lahir dari database menjadi umur dinamis tahun ini."""
+    if not tanggal_lahir_obj:
+        return 0
+    hari_ini = date.today()
+    if isinstance(tanggal_lahir_obj, str):
+        try:
+            tanggal_lahir_obj = datetime.strptime(tanggal_lahir_obj, "%Y-%m-%d").date()
+        except ValueError:
+            return 0
+    usia = hari_ini.year - tanggal_lahir_obj.year
+    belum_ulang_tahun = (hari_ini.month, hari_ini.day) < (tanggal_lahir_obj.month, tanggal_lahir_obj.day)
+    if belum_ulang_tahun:
+        usia -= 1
+    return usia
 
 
 class MainPage(QWidget):
@@ -60,7 +73,11 @@ class MainPage(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._all_data: list[dict] = list(DUMMY_RESPONDENTS)
+
+        # 🚀 Koneksi ke MySQL
+        self.db = DatabaseManager()
+        self._all_data: list[dict] = self.db.get_all_respondents()
+
         self._build_ui()
         self._populate_table(self._all_data)
 
@@ -195,8 +212,8 @@ class MainPage(QWidget):
         n = len(data)
         self.count_label.setText(f"Menampilkan {n} responden")
 
-        total   = len(self._all_data)
-        normal  = sum(1 for d in self._all_data if d["status"] == "Normal")
+        total    = len(self._all_data)
+        normal   = sum(1 for d in self._all_data if d.get("status") == "Normal")
         abnormal = total - normal
         self.total_label.setText(
             f"Total: {total}  •  Normal: {normal}  •  Tidak Normal: {abnormal}"
@@ -207,26 +224,33 @@ class MainPage(QWidget):
         self.table.insertRow(row)
         self.table.setRowHeight(row, 60)
 
+        uid       = data.get("uid", "")
+        nama      = data.get("nama", "")
+        umur      = hitung_usia(data.get("tanggal_lahir"))
+        jk        = data.get("jenis_kelamin", "")
+        status    = data.get("status", "Normal")
+
         # ── Nama (center, bukan rata kiri) ──────────────────────────────
-        nama_item = QTableWidgetItem(data["nama"])
+        nama_item = QTableWidgetItem(nama)
         nama_item.setFont(QFont("Segoe UI", 13, QFont.Medium))
         nama_item.setTextAlignment(Qt.AlignCenter)
         nama_item.setData(Qt.UserRole, data)
-        nama_item.setToolTip(data["nama"])
+        nama_item.setToolTip(nama)
         self.table.setItem(row, COL_NAMA, nama_item)
 
         # ── Umur ─────────────────────────────────────────────────────────
-        umur_item = QTableWidgetItem(f"{data['umur']} thn")
+        umur_text = f"{umur} thn" if umur > 0 else "—"
+        umur_item = QTableWidgetItem(umur_text)
         umur_item.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, COL_UMUR, umur_item)
 
         # ── Jenis Kelamin (teks polos, tanpa ikon ♂/♀) ───────────────────
-        jk_item = QTableWidgetItem(data["jenis_kelamin"])
+        jk_item = QTableWidgetItem(jk)
         jk_item.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, COL_JK, jk_item)
 
         # ── Status (teks berwarna polos, tanpa kotak/border) ─────────────
-        badge = StatusBadge(data["status"])
+        badge = StatusBadge(status)
         badge_container = QWidget()
         badge_container.setStyleSheet("background: transparent;")
         bc_layout = QHBoxLayout(badge_container)
@@ -270,12 +294,46 @@ class MainPage(QWidget):
         btn_layout.setContentsMargins(6, 0, 6, 0)
         btn_layout.addWidget(monitor_btn, alignment=Qt.AlignCenter)
         self.table.setCellWidget(row, COL_AKSI, btn_container)
-        monitor_btn.clicked.connect(lambda _, d=data: self._on_monitor_clicked(d))
+
+        # Payload untuk monitoring_page.py — key HARUS lowercase supaya
+        # cocok dengan monitoring_page.set_respondent() yang membaca
+        # data.get("nama"/"umur"/"jenis_kelamin"/"status").
+        monitor_data = {
+            "uid": uid,
+            "nama": nama,
+            "umur": umur,
+            "jenis_kelamin": jk,
+            "status": status,
+        }
+        monitor_btn.clicked.connect(lambda _, d=monitor_data: self._on_monitor_clicked(d))
 
     def add_respondent(self, data: dict):
-        """Public: tambahkan responden baru ke data dan refresh tabel."""
-        self._all_data.append(data)
-        self._apply_filters()
+        """
+        Callback dari RespondentDialog.respondent_added.
+        Simpan responden baru ke MySQL, lalu refresh tabel dari database
+        (bukan sekadar append ke list lokal) supaya UID & data selalu
+        sinkron dengan sumber kebenaran (database).
+        """
+        nama          = data.get("nama", "")
+        tanggal_lahir = data.get("tanggal_lahir", "")
+        jk            = data.get("jenis_kelamin", "")
+        status        = data.get("status", "Normal")
+
+        new_uid = f"R{len(self._all_data) + 1:03d}"
+
+        berhasil = self.db.add_respondent(
+            uid=new_uid,
+            nama=nama,
+            tanggal_lahir=tanggal_lahir,
+            jenis_kelamin=jk,
+            status=status,
+        )
+
+        if berhasil:
+            self._all_data = self.db.get_all_respondents()
+            self._apply_filters()
+        else:
+            print("[MainPage] Gagal menyimpan responden baru ke database.")
 
     # ── Filters ──────────────────────────────────────────────────────────────
     def _apply_filters(self):
@@ -284,8 +342,8 @@ class MainPage(QWidget):
 
         filtered = [
             d for d in self._all_data
-            if query in d["nama"].lower()
-            and (status_filter == "Semua Status" or d["status"] == status_filter)
+            if query in d.get("nama", "").lower()
+            and (status_filter == "Semua Status" or d.get("status", "") == status_filter)
         ]
         self._populate_table(filtered)
 
