@@ -2,6 +2,7 @@
 import mysql.connector
 from mysql.connector import Error
 
+
 class DatabaseManager:
     def __init__(self):
         # Konfigurasi disesuaikan dengan profil default Laragon
@@ -16,6 +17,8 @@ class DatabaseManager:
         """Membuka koneksi baru ke instance MySQL."""
         return mysql.connector.connect(**self.config)
 
+    # ── RESPONDENT CRUD ───────────────────────────────────────────────────────
+
     # 1. READ / GET ALL RESPONDENTS
     def get_all_respondents(self):
         """Mengambil semua data responden dari MySQL."""
@@ -24,7 +27,7 @@ class DatabaseManager:
         conn = None
         try:
             conn = self._get_connection()
-            cursor = conn.cursor(dictionary=True) # Mengembalikan data dalam bentuk dict Python
+            cursor = conn.cursor(dictionary=True)
             cursor.execute(query)
             respondents = cursor.fetchall()
         except Error as e:
@@ -96,91 +99,142 @@ class DatabaseManager:
                 conn.close()
         return count
 
-    def save_session_with_logs(self, uid, sesi_ke, jarak, waktu_total, avg_angle, max_angle, min_angle, list_sudut):
+    def save_session_with_logs(self, uid, sesi_ke, jarak, waktu_total,
+                               avg_angle, max_angle, min_angle, list_sudut):
         """
-        Menyimpan ringkasan data ke gait_sessions, lalu mem-bulk insert raw data logger ke gait_logs.
-        Murni merekam data tanpa melakukan modifikasi pada tabel master responden.
+        Menyimpan ringkasan sesi ke gait_sessions, lalu bulk insert raw data
+        logger ke gait_logs.
+
+        Parameter list_sudut berisi list of tuple: (sudut: float, waktu_ambil: datetime).
+        waktu_ambil diambil tepat saat frame diterima di UI thread (bukan dihitung mundur),
+        sehingga timestamp mencerminkan waktu perekaman yang sesungguhnya.
         """
         query_session = """
             INSERT INTO gait_sessions 
-            (responden_uid, sesi_ke, jarak_meter, waktu_detik_total, sudut_rata_rata, sudut_maksimum, sudut_minimum) 
+            (responden_uid, sesi_ke, jarak_meter, waktu_detik_total,
+             sudut_rata_rata, sudut_maksimum, sudut_minimum) 
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
-        
+
+        # waktu_ambil diisi eksplisit dari Python (bukan DEFAULT MySQL)
+        # agar timestamp mencerminkan waktu aktual saat frame diproses.
         query_logs = """
             INSERT INTO gait_logs 
-            (session_id, frame_ke, waktu_relatif, sudut_ankle) 
+            (session_id, frame_ke, sudut_ankle, waktu_ambil) 
             VALUES (%s, %s, %s, %s)
         """
-        
+
         success = False
         conn = None
         try:
             conn = self._get_connection()
-            conn.autocommit = False # Transaksi manual (Atomic)
+            conn.autocommit = False  # Transaksi manual (Atomic)
             cursor = conn.cursor()
 
-            # 1. Simpan Ringkasan Sesi ke tabel gait_sessions
-            cursor.execute(query_session, (uid, sesi_ke, jarak, waktu_total, avg_angle, max_angle, min_angle))
-            
+            # 1. Simpan ringkasan sesi ke tabel gait_sessions
+            cursor.execute(
+                query_session,
+                (uid, sesi_ke, jarak, waktu_total, avg_angle, max_angle, min_angle)
+            )
+
             # 2. Dapatkan ID session yang baru saja terbuat
             session_id = cursor.lastrowid
-            
-            # 3. Bentuk data tuple array untuk logger per frame
-            total_frames = len(list_sudut)
-            interval_waktu = waktu_total / total_frames if total_frames > 0 else 0
-            
-            log_data_tuples = []
-            for i, sudut in enumerate(list_sudut):
-                frame_ke = i + 1
-                waktu_relatif = frame_ke * interval_waktu
-                log_data_tuples.append((session_id, frame_ke, waktu_relatif, float(sudut)))
 
-            # 4. Bulk Insert ke tabel gait_logs
+            # 3. Bentuk data tuple array untuk bulk insert
+            #    list_sudut adalah list of (sudut: float, waktu_ambil: datetime)
+            log_data_tuples = []
+            for i, item in enumerate(list_sudut):
+                frame_ke = i + 1
+
+                # Unpack tuple — sudut dan timestamp aktual dari UI thread
+                if isinstance(item, tuple):
+                    sudut, waktu_ambil = item
+                else:
+                    # Fallback backward-compatible jika masih float biasa
+                    sudut = item
+                    waktu_ambil = None
+
+                log_data_tuples.append(
+                    (session_id, frame_ke, float(sudut), waktu_ambil)
+                )
+
+            # 4. Bulk insert ke tabel gait_logs
             cursor.executemany(query_logs, log_data_tuples)
 
-            # 5. Commit transaksi
+            # 5. Commit seluruh transaksi sekaligus
             conn.commit()
             success = True
-            print(f"Berhasil logging sesi #{sesi_ke} dengan {total_frames} frame raw data.")
+            print(
+                f"[DB] Berhasil logging sesi #{sesi_ke} "
+                f"dengan {len(log_data_tuples)} frame raw data."
+            )
 
         except Error as e:
             if conn:
                 conn.rollback()
-            print(f"Error Database Transaction Data Logger: {e}")
+            print(f"[DB] Error Transaction Data Logger: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
                 conn.close()
-                
+
         return success
 
-    def get_raw_gait_logs(self, uid):
+    def get_raw_gait_logs(self, uid, sesi_ke=None):
         """
-        Mengambil seluruh data logger mentah (per frame) dari tabel gait_logs 
-        yang terhubung dengan semua sesi milik suatu responden tertentu untuk ekspor CSV.
+        Mengambil data logger mentah (per frame) dari tabel gait_logs
+        yang terhubung dengan sesi milik suatu responden untuk ekspor CSV.
+
+        Parameter:
+          - uid     : UID responden (wajib)
+          - sesi_ke : nomor sesi yang ingin diambil; jika None, ambil semua sesi
+
+        Kolom yang dikembalikan:
+          - sesi_ke         : nomor urut sesi
+          - frame_ke        : nomor urut frame dalam sesi
+          - sudut_ankle     : sudut terukur (float)
+          - waktu_ambil     : timestamp aktual saat frame direkam (TIMESTAMP(3))
+          - waktu_sesi      : timestamp saat sesi dibuat (dari gait_sessions.waktu_ambil)
         """
-        query = """
-            SELECT 
-                s.sesi_ke, 
-                l.frame_ke, 
-                l.waktu_relatif, 
-                l.sudut_ankle, 
-                s.waktu_ambil
-            FROM gait_logs l
-            JOIN gait_sessions s ON l.session_id = s.id
-            WHERE s.responden_uid = %s
-            ORDER BY s.sesi_ke ASC, l.frame_ke ASC
-        """
+        if sesi_ke is not None:
+            query = """
+                SELECT
+                    s.sesi_ke,
+                    l.frame_ke,
+                    l.sudut_ankle,
+                    l.waktu_ambil,
+                    s.waktu_ambil AS waktu_sesi
+                FROM gait_logs l
+                JOIN gait_sessions s ON l.session_id = s.id
+                WHERE s.responden_uid = %s
+                  AND s.sesi_ke = %s
+                ORDER BY l.frame_ke ASC
+            """
+            params = (uid, sesi_ke)
+        else:
+            query = """
+                SELECT
+                    s.sesi_ke,
+                    l.frame_ke,
+                    l.sudut_ankle,
+                    l.waktu_ambil,
+                    s.waktu_ambil AS waktu_sesi
+                FROM gait_logs l
+                JOIN gait_sessions s ON l.session_id = s.id
+                WHERE s.responden_uid = %s
+                ORDER BY s.sesi_ke ASC, l.frame_ke ASC
+            """
+            params = (uid,)
+
         logs = []
         conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor(dictionary=True)
-            cursor.execute(query, (uid,))
+            cursor.execute(query, params)
             logs = cursor.fetchall()
         except Error as e:
-            print(f"Error Database (GET RAW LOGS): {e}")
+            print(f"[DB] Error GET RAW LOGS: {e}")
         finally:
             if conn and conn.is_connected():
                 cursor.close()
