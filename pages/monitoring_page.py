@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 
-from widgets.camera_placeholder import CameraPlaceholder
+from app_camera import AnkleCameraWidget
 from widgets.metric_card import MetricCard
 from widgets.status_badge import StatusBadge
 
@@ -69,7 +69,7 @@ class MonitoringPage(QWidget):
         back_btn = QPushButton("←  Kembali ke Daftar Responden")
         back_btn.setObjectName("BackBtn")
         back_btn.setCursor(Qt.PointingHandCursor)
-        back_btn.clicked.connect(self.navigate_back.emit)
+        back_btn.clicked.connect(self._on_back_clicked)
         nav_row.addWidget(back_btn)
         nav_row.addStretch()
         root.addLayout(nav_row)
@@ -280,7 +280,7 @@ class MonitoringPage(QWidget):
         self._is_running = True
         self._elapsed_seconds = 0
         self._timer.start(1000)
-        self.camera.set_running(True)
+        self.camera.start_camera()
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.submit_btn.setEnabled(False)
@@ -294,7 +294,7 @@ class MonitoringPage(QWidget):
     def _on_stop(self):
         self._is_running = False
         self._timer.stop()
-        self.camera.set_running(False)
+        self.camera.stop_camera()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.submit_btn.setEnabled(True)
@@ -316,7 +316,7 @@ class MonitoringPage(QWidget):
         self._is_running = False
         self._elapsed_seconds = 0
         self._timer.stop()
-        self.camera.set_running(False)
+        self.camera.stop_camera()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.submit_btn.setEnabled(False)
