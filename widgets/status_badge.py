@@ -1,6 +1,7 @@
 """
 widgets/status_badge.py
-Reusable colored badge for Normal / Tidak Normal status.
+Reusable status label for Normal / Tidak Normal.
+Revisi: tampilan teks polos berwarna, TANPA kotak/border/background pill.
 """
 
 from PySide6.QtWidgets import QLabel
@@ -9,7 +10,7 @@ from PySide6.QtCore import Qt
 
 class StatusBadge(QLabel):
     """
-    A QLabel styled as a colored pill badge.
+    A QLabel showing colored plain text for status (no box/border).
 
     Args:
         status (str): "Normal" or "Tidak Normal"
@@ -24,16 +25,16 @@ class StatusBadge(QLabel):
 
     # ------------------------------------------------------------------
     def set_status(self, status: str):
-        """Update the badge text and visual style."""
+        """Update the label text and visual style."""
         self._status = status
         self.setText(status)
 
         is_normal = status.strip().lower() == "normal"
 
         if self._large:
-            self.setObjectName("BadgeNormalLarge" if is_normal else "BadgeAbnormalLarge")
+            self.setObjectName("StatusTextNormalLarge" if is_normal else "StatusTextAbnormalLarge")
         else:
-            self.setObjectName("BadgeNormal" if is_normal else "BadgeAbnormal")
+            self.setObjectName("StatusTextNormal" if is_normal else "StatusTextAbnormal")
 
         # Force style refresh after objectName change
         self.style().unpolish(self)

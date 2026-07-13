@@ -1,6 +1,11 @@
 """
 widgets/metric_card.py
 A card widget displaying a large numeric metric (sudut, waktu, jarak).
+
+Revisi: accent bar (garis kiri berwarna) dan warna teks value ber-aksen
+dihapus. Kartu sekarang polos & konsisten, memakai style Card standar
+(sesuai tema warm neutral). Parameter accent_color tetap diterima untuk
+kompatibilitas API lama, tapi tidak lagi mempengaruhi tampilan visual.
 """
 
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel, QHBoxLayout, QWidget
@@ -15,7 +20,8 @@ class MetricCard(QFrame):
         label       (str): Short title, e.g. "Sudut Ankle"
         value       (str): The numeric / text value, e.g. "23.4"
         unit        (str): Unit suffix, e.g. "°"
-        accent_color(str): Left-border accent color hex string.
+        accent_color(str): Diterima untuk kompatibilitas, TIDAK dipakai lagi
+                           untuk border/warna teks (kartu sudah polos).
     """
 
     def __init__(
@@ -23,34 +29,19 @@ class MetricCard(QFrame):
         label: str = "Metric",
         value: str = "—",
         unit: str = "",
-        accent_color: str = "#2D7DD2",
+        accent_color: str = "#3E6E63",
         parent=None,
     ):
         super().__init__(parent)
         self.setObjectName("Card")
-        self._accent = accent_color
+        self._accent = accent_color  # disimpan untuk kompatibilitas API saja
         self._build_ui(label, value, unit)
-        self._apply_accent()
 
     # ------------------------------------------------------------------
     def _build_ui(self, label: str, value: str, unit: str):
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(110)
 
-        outer = QHBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        # Colored left accent bar
-        self._accent_bar = QFrame()
-        self._accent_bar.setFixedWidth(6)
-        self._accent_bar.setStyleSheet(
-            f"background-color: {self._accent}; border-radius: 3px; border: none;"
-        )
-        outer.addWidget(self._accent_bar)
-
-        # Content
-        content = QWidget()
-        layout = QVBoxLayout(content)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(6)
 
@@ -66,7 +57,6 @@ class MetricCard(QFrame):
 
         self._value_widget = QLabel(value)
         self._value_widget.setObjectName("MetricValue")
-        self._value_widget.setStyleSheet(f"color: {self._accent};")
         value_row.addWidget(self._value_widget)
 
         self._unit_widget = QLabel(unit)
@@ -76,13 +66,6 @@ class MetricCard(QFrame):
         value_row.addStretch()
 
         layout.addLayout(value_row)
-        outer.addWidget(content)
-
-    # ------------------------------------------------------------------
-    def _apply_accent(self):
-        self._accent_bar.setStyleSheet(
-            f"background-color: {self._accent}; border-radius: 3px; border: none;"
-        )
 
     # ------------------------------------------------------------------
     def set_value(self, value: str):
@@ -96,6 +79,8 @@ class MetricCard(QFrame):
         self._label_widget.setText(label.upper())
 
     def set_accent(self, color: str):
+        """
+        Disimpan untuk kompatibilitas API lama. Tidak lagi mengubah
+        tampilan visual (kartu sudah didesain polos tanpa aksen warna).
+        """
         self._accent = color
-        self._apply_accent()
-        self._value_widget.setStyleSheet(f"color: {color};")

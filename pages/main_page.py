@@ -1,7 +1,8 @@
 """
 pages/main_page.py
 Main page — Daftar Responden dengan search, filter, tabel, dan tombol tambah.
-Revisi: sidebar dihapus, kolom tabel proporsional, teks tidak terpotong.
+Revisi 2: Nama center, badge status tanpa kotak, jenis kelamin tanpa ikon,
+tombol Monitoring lebih menonjol dan mudah dikenali.
 """
 
 from __future__ import annotations
@@ -19,9 +20,10 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QComboBox,
     QAbstractItemView,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 
 from widgets.status_badge import StatusBadge
 from widgets.respondent_dialog import RespondentDialog
@@ -41,9 +43,9 @@ COL_NAMA, COL_UMUR, COL_JK, COL_STATUS, COL_AKSI = 0, 1, 2, 3, 4
 
 # Lebar tetap kolom non-stretch (px) — cukup untuk konten terpanjang
 COL_UMUR_W   = 90    # "60 thn" → cukup 90
-COL_JK_W     = 160   # "♀  Perempuan" → 160
-COL_STATUS_W = 150   # "Tidak Normal" badge → 150
-COL_AKSI_W   = 150   # "▶  Monitoring" button → 150
+COL_JK_W     = 130   # "Perempuan" (tanpa ikon) → 130
+COL_STATUS_W = 130   # "Tidak Normal" teks polos → 130
+COL_AKSI_W   = 190   # tombol Monitoring baru, lebih lega → 190 (cukup untuk ikon + teks + padding)
 
 
 class MainPage(QWidget):
@@ -146,6 +148,8 @@ class MainPage(QWidget):
 
         hdr = self.table.horizontalHeader()
         hdr.setHighlightSections(False)
+        # Header tetap center supaya konsisten dengan isi kolom
+        hdr.setDefaultAlignment(Qt.AlignCenter)
 
         # Kolom Nama: mengisi sisa ruang
         hdr.setSectionResizeMode(COL_NAMA, QHeaderView.Stretch)
@@ -167,7 +171,7 @@ class MainPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setFocusPolicy(Qt.NoFocus)
-        self.table.verticalHeader().setDefaultSectionSize(56)
+        self.table.verticalHeader().setDefaultSectionSize(60)
 
         root.addWidget(self.table, stretch=1)
 
@@ -201,11 +205,12 @@ class MainPage(QWidget):
     def _insert_row(self, data: dict):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        self.table.setRowHeight(row, 56)
+        self.table.setRowHeight(row, 60)
 
-        # ── Nama ─────────────────────────────────────────────────────────
+        # ── Nama (center, bukan rata kiri) ──────────────────────────────
         nama_item = QTableWidgetItem(data["nama"])
         nama_item.setFont(QFont("Segoe UI", 13, QFont.Medium))
+        nama_item.setTextAlignment(Qt.AlignCenter)
         nama_item.setData(Qt.UserRole, data)
         nama_item.setToolTip(data["nama"])
         self.table.setItem(row, COL_NAMA, nama_item)
@@ -215,39 +220,55 @@ class MainPage(QWidget):
         umur_item.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, COL_UMUR, umur_item)
 
-        # ── Jenis Kelamin ─────────────────────────────────────────────────
-        jk_icon = "♂" if data["jenis_kelamin"] == "Laki-laki" else "♀"
-        jk_item = QTableWidgetItem(f"{jk_icon}  {data['jenis_kelamin']}")
+        # ── Jenis Kelamin (teks polos, tanpa ikon ♂/♀) ───────────────────
+        jk_item = QTableWidgetItem(data["jenis_kelamin"])
         jk_item.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, COL_JK, jk_item)
 
-        # ── Status badge ──────────────────────────────────────────────────
+        # ── Status (teks berwarna polos, tanpa kotak/border) ─────────────
         badge = StatusBadge(data["status"])
-        # Pastikan badge punya minimum width supaya teks tidak terpotong
-        badge.setMinimumWidth(110)
         badge_container = QWidget()
         badge_container.setStyleSheet("background: transparent;")
         bc_layout = QHBoxLayout(badge_container)
-        bc_layout.setContentsMargins(10, 8, 10, 8)
+        bc_layout.setContentsMargins(0, 0, 0, 0)
         bc_layout.addWidget(badge, alignment=Qt.AlignCenter)
         self.table.setCellWidget(row, COL_STATUS, badge_container)
 
-        # ── Aksi: tombol Monitoring ───────────────────────────────────────
+        # ── Aksi: tombol Monitoring (lebih menonjol & mudah dikenali) ────
         monitor_btn = QPushButton("▶  Monitoring")
-        monitor_btn.setObjectName("SecondaryBtn")
+        monitor_btn.setObjectName("MonitorBtn")
         monitor_btn.setCursor(Qt.PointingHandCursor)
         monitor_btn.setFixedHeight(36)
-        # Pastikan teks tombol tidak terpotong
-        monitor_btn.setMinimumWidth(120)
+        monitor_btn.setFixedWidth(130)
+        monitor_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # Inline style sebagai jaminan tampilan (tidak bergantung penuh pada
+        # cascade QSS global, supaya tombol pasti terlihat solid & jelas
+        # sebagai tombol, bukan teks biasa).
         monitor_btn.setStyleSheet(
-            "QPushButton#SecondaryBtn { font-size: 12px; padding: 6px 14px; }"
+            """
+            QPushButton {
+                background-color: #3E6E63;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-size: 13px;
+                font-weight: 700;
+            }
+            QPushButton:hover {
+                background-color: #335A51;
+            }
+            QPushButton:pressed {
+                background-color: #24413B;
+            }
+            """
         )
 
         btn_container = QWidget()
         btn_container.setStyleSheet("background: transparent;")
         btn_layout = QHBoxLayout(btn_container)
-        btn_layout.setContentsMargins(8, 10, 8, 10)
-        btn_layout.addWidget(monitor_btn)
+        btn_layout.setContentsMargins(6, 0, 6, 0)
+        btn_layout.addWidget(monitor_btn, alignment=Qt.AlignCenter)
         self.table.setCellWidget(row, COL_AKSI, btn_container)
         monitor_btn.clicked.connect(lambda _, d=data: self._on_monitor_clicked(d))
 
