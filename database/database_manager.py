@@ -180,10 +180,14 @@ class DatabaseManager:
 
         return success
 
-    def get_raw_gait_logs(self, uid):
+    def get_raw_gait_logs(self, uid, sesi_ke=None):
         """
-        Mengambil seluruh data logger mentah (per frame) dari tabel gait_logs
-        yang terhubung dengan semua sesi milik suatu responden untuk ekspor CSV.
+        Mengambil data logger mentah (per frame) dari tabel gait_logs
+        yang terhubung dengan sesi milik suatu responden untuk ekspor CSV.
+
+        Parameter:
+          - uid     : UID responden (wajib)
+          - sesi_ke : nomor sesi yang ingin diambil; jika None, ambil semua sesi
 
         Kolom yang dikembalikan:
           - sesi_ke         : nomor urut sesi
@@ -192,24 +196,42 @@ class DatabaseManager:
           - waktu_ambil     : timestamp aktual saat frame direkam (TIMESTAMP(3))
           - waktu_sesi      : timestamp saat sesi dibuat (dari gait_sessions.waktu_ambil)
         """
-        query = """
-            SELECT 
-                s.sesi_ke,
-                l.frame_ke,
-                l.sudut_ankle,
-                l.waktu_ambil,
-                s.waktu_ambil AS waktu_sesi
-            FROM gait_logs l
-            JOIN gait_sessions s ON l.session_id = s.id
-            WHERE s.responden_uid = %s
-            ORDER BY s.sesi_ke ASC, l.frame_ke ASC
-        """
+        if sesi_ke is not None:
+            query = """
+                SELECT
+                    s.sesi_ke,
+                    l.frame_ke,
+                    l.sudut_ankle,
+                    l.waktu_ambil,
+                    s.waktu_ambil AS waktu_sesi
+                FROM gait_logs l
+                JOIN gait_sessions s ON l.session_id = s.id
+                WHERE s.responden_uid = %s
+                  AND s.sesi_ke = %s
+                ORDER BY l.frame_ke ASC
+            """
+            params = (uid, sesi_ke)
+        else:
+            query = """
+                SELECT
+                    s.sesi_ke,
+                    l.frame_ke,
+                    l.sudut_ankle,
+                    l.waktu_ambil,
+                    s.waktu_ambil AS waktu_sesi
+                FROM gait_logs l
+                JOIN gait_sessions s ON l.session_id = s.id
+                WHERE s.responden_uid = %s
+                ORDER BY s.sesi_ke ASC, l.frame_ke ASC
+            """
+            params = (uid,)
+
         logs = []
         conn = None
         try:
             conn = self._get_connection()
             cursor = conn.cursor(dictionary=True)
-            cursor.execute(query, (uid,))
+            cursor.execute(query, params)
             logs = cursor.fetchall()
         except Error as e:
             print(f"[DB] Error GET RAW LOGS: {e}")

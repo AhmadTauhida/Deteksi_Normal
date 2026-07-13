@@ -2,16 +2,12 @@ import cv2
 import mediapipe as mp
 from typing import Optional, Tuple
 
-from utils import MovingAverageSmoother, calculate_ankle_angle
+from utils import MovingAverageSmoother, calculate_ankle_angle, OneEuroFilter
 
 
 class AnkleTracker:
+    # PERBAIKAN 1: Ubah default model_complexity menjadi 1 untuk performa real-time yang lebih baik dan stabil.
     def __init__(self, model_complexity: int = 1, smooth_landmarks: bool = True, smoothing_window: int = 5):
-        # model_complexity=2 (the heaviest of MediaPipe's 3 pose models) was
-        # taking 60-150ms+ per frame on typical CPUs, far slower than the
-        # ~20ms the old capture loop assumed. model_complexity=1 is a much
-        # better fit for real-time webcam use while still being accurate
-        # enough for ankle-angle tracking.
         self.mp_pose = mp.solutions.pose
         self.mp_drawing = mp.solutions.drawing_utils
         self.pose = self.mp_pose.Pose(
@@ -19,10 +15,11 @@ class AnkleTracker:
             model_complexity=model_complexity,
             smooth_landmarks=smooth_landmarks,
             enable_segmentation=False,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
+            # PERBAIKAN 2: Naikkan confidence menjadi 0.7 agar marker tidak mudah getar/ngawur
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7,
         )
-        self.smoother = MovingAverageSmoother(window_size=smoothing_window)
+        self.smoother = OneEuroFilter(min_cutoff=0.5, beta=0.05)
 
     def _landmark_to_point(self, landmark, frame_width: int, frame_height: int) -> Tuple[float, float]:
         return landmark.x * frame_width, landmark.y * frame_height
@@ -30,39 +27,48 @@ class AnkleTracker:
     def _extract_side_angle(self, landmarks, side_prefix: str, image_width: int, image_height: int) -> Optional[float]:
         knee = getattr(self.mp_pose.PoseLandmark, f"{side_prefix}_KNEE")
         ankle = getattr(self.mp_pose.PoseLandmark, f"{side_prefix}_ANKLE")
-        heel = getattr(self.mp_pose.PoseLandmark, f"{side_prefix}_HEEL")
+        
+        # GANTI _HEEL menjadi _FOOT_INDEX
+        foot_idx = getattr(self.mp_pose.PoseLandmark, f"{side_prefix}_FOOT_INDEX") 
 
         knee_landmark = landmarks[knee.value]
         ankle_landmark = landmarks[ankle.value]
-        heel_landmark = landmarks[heel.value]
+        foot_landmark = landmarks[foot_idx.value] # Gunakan foot_index
 
-        visibility_threshold = 0.4
+        visibility_threshold = 0.7 
         if (
             knee_landmark.visibility < visibility_threshold
             or ankle_landmark.visibility < visibility_threshold
-            or heel_landmark.visibility < visibility_threshold
+            or foot_landmark.visibility < visibility_threshold # Cek visibilitas foot_index
         ):
             return None
 
         knee_point = self._landmark_to_point(knee_landmark, image_width, image_height)
         ankle_point = self._landmark_to_point(ankle_landmark, image_width, image_height)
-        heel_point = self._landmark_to_point(heel_landmark, image_width, image_height)
+        foot_point = self._landmark_to_point(foot_landmark, image_width, image_height)
 
-        return calculate_ankle_angle(knee_point, ankle_point, heel_point)
+        # Lempar ke utils.py yang baru
+        return calculate_ankle_angle(knee_point, ankle_point, foot_point)
 
-    def _select_best_side(self, landmarks, image_width: int, image_height: int) -> Tuple[Optional[float], str]:
-        right_angle = self._extract_side_angle(landmarks, "RIGHT", image_width, image_height)
+    def _get_left_side_angle(self, landmarks, image_width: int, image_height: int) -> Tuple[Optional[float], str]:
+        """Hanya mengambil sudut ankle dari kaki kiri jika kaki kiri benar-benar menghadap kamera."""
+        
+        # PERBAIKAN 4: Validasi posisi Z (kedalaman) untuk membedakan kaki kiri dan kanan
+        # Semakin kecil nilai Z, semakin dekat ke kamera.
+        left_ankle_z = landmarks[self.mp_pose.PoseLandmark.LEFT_ANKLE.value].z
+        right_ankle_z = landmarks[self.mp_pose.PoseLandmark.RIGHT_ANKLE.value].z
+        
+        # Jika ankle kanan lebih dekat ke kamera daripada ankle kiri (sedang menghadap kanan)
+        if right_ankle_z < left_ankle_z:
+             return None, "Right leg facing camera (Ignored)"
+
         left_angle = self._extract_side_angle(landmarks, "LEFT", image_width, image_height)
-
-        if right_angle is not None and left_angle is not None:
-            return (right_angle, "Right") if right_angle <= left_angle else (left_angle, "Left")
-        if right_angle is not None:
-            return right_angle, "Right"
         if left_angle is not None:
             return left_angle, "Left"
         return None, "Unknown"
 
     def process_frame(self, frame: cv2.Mat) -> Tuple[cv2.Mat, Optional[float], str]:
+        # (Isi dari process_frame tetap sama persis seperti kode aslimu)
         image_height, image_width = frame.shape[:2]
         image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image_rgb.flags.writeable = False
@@ -74,10 +80,13 @@ class AnkleTracker:
         side_label = "Unknown"
 
         if results.pose_landmarks:
-            angle, side_label = self._select_best_side(
+            angle, side_label = self._get_left_side_angle(
                 results.pose_landmarks.landmark, image_width, image_height
             )
-            angle = self.smoother.smooth(angle)
+            angle = self.smoother.filter(angle)
+            
+            # Opsional: Kamu bisa membungkus draw_landmarks dalam kondisi 'if angle is not None:' 
+            # agar garis kerangka hanya digambar ketika kaki kiri yang valid terdeteksi.
             self.mp_drawing.draw_landmarks(
                 image_bgr,
                 results.pose_landmarks,
@@ -89,7 +98,7 @@ class AnkleTracker:
             if angle is not None:
                 cv2.putText(
                     image_bgr,
-                    f"{side_label} Ankle: {angle:.1f}°",
+                    f"Left Ankle: {angle:.1f} Deg",
                     (16, 32),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.85,
@@ -100,7 +109,7 @@ class AnkleTracker:
             else:
                 cv2.putText(
                     image_bgr,
-                    "Ankle landmarks not visible",
+                    "Left ankle not clearly visible",
                     (16, 32),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.75,

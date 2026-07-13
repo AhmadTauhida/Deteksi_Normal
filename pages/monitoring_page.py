@@ -46,6 +46,10 @@ class MonitoringPage(QWidget):
         # waktu_ambil diambil tepat saat frame diterima di _on_angle_updated()
         self._session_angles: list[tuple[float, datetime]] = []
 
+        # Nomor sesi yang terakhir berhasil di-submit ke database
+        # Dipakai oleh _on_export agar ekspor hanya data sesi tersebut
+        self._last_submitted_sesi: int | None = None
+
         self._build_ui()
 
     # ── UI Construction ──────────────────────────────────────────────────────
@@ -257,6 +261,9 @@ class MonitoringPage(QWidget):
         self.respondent_meta.setText(f"{umur} tahun  •  {jk}")
         self.status_badge.set_status(status)
 
+        # Reset sesi terakhir yang di-submit saat berpindah responden
+        self._last_submitted_sesi = None
+
         self._reset_session()
         self.refresh_session_label()
 
@@ -361,12 +368,18 @@ class MonitoringPage(QWidget):
         )
 
         if sesi_berhasil:
+            # Simpan nomor sesi yang baru saja di-submit agar ekspor bisa
+            # merujuk ke sesi yang tepat, bukan seluruh riwayat responden
+            self._last_submitted_sesi = sesi_ke
+
             self.submit_btn.setEnabled(False)
+            self.export_btn.setEnabled(True)   # aktifkan ekspor per sesi ini
             self.refresh_session_label()
             self._session_angles.clear()  # Reset logger bersih setelah submit
 
             self.status_strip.setText(
-                "📤 Sukses! Seluruh raw data logger sesi berhasil disimpan ke MySQL."
+                f"📤 Sukses! Raw data sesi #{sesi_ke:03d} berhasil disimpan ke MySQL."
+                " Klik Export untuk mengunduh CSV sesi ini."
             )
             self.status_strip.setStyleSheet(
                 "font-size: 11px; color: #3E6E63; background: transparent;"
@@ -387,22 +400,36 @@ class MonitoringPage(QWidget):
             QMessageBox.warning(self, "Peringatan", "Tidak ada responden yang aktif.")
             return
 
-        raw_logs = self.db.get_raw_gait_logs(uid)
+        # Gunakan sesi terakhir yang di-submit dalam session ini.
+        # Jika belum ada (baru buka / ganti responden), ambil sesi terbaru dari DB.
+        if self._last_submitted_sesi is not None:
+            sesi_ke = self._last_submitted_sesi
+        else:
+            sesi_ke = self.db.get_session_count(uid)  # total sesi = nomor sesi terakhir
+            if sesi_ke == 0:
+                QMessageBox.information(
+                    self, "Info",
+                    f"Belum ada sesi yang pernah di-submit untuk {nama}."
+                )
+                return
+
+        # Ambil raw log hanya untuk sesi yang baru saja di-submit
+        raw_logs = self.db.get_raw_gait_logs(uid, sesi_ke=sesi_ke)
 
         if not raw_logs:
             QMessageBox.information(
                 self, "Info",
-                f"Belum ada rekaman raw data logger untuk {nama} yang bisa diekspor."
+                f"Tidak ada data raw log untuk {nama} sesi #{sesi_ke:03d}."
             )
             return
 
         date_str = datetime.now().strftime("%Y%m%d")
         safe_name = nama.replace(" ", "_")
-        default_filename = f"Raw_Gait_Logger_{safe_name}_{date_str}.csv"
+        default_filename = f"Raw_Gait_Logger_{safe_name}_Sesi{sesi_ke:03d}_{date_str}.csv"
 
         file_path, _ = QFileDialog.getSaveFileName(
             self,
-            "Ekspor Raw Data Logger ke CSV",
+            f"Ekspor Raw Data Logger Sesi #{sesi_ke:03d} ke CSV",
             default_filename,
             "CSV Files (*.csv);;All Files (*)"
         )
@@ -443,13 +470,15 @@ class MonitoringPage(QWidget):
                             waktu_sesi
                         ])
 
-                self.status_strip.setText(f"✅ Raw data sukses diekspor ke: {file_path}")
+                self.status_strip.setText(
+                    f"✅ Raw data sesi #{sesi_ke:03d} sukses diekspor ke: {file_path}"
+                )
                 self.status_strip.setStyleSheet(
                     "font-size: 11px; color: #3E6E63; background: transparent;"
                 )
                 QMessageBox.information(
                     self, "Ekspor Berhasil",
-                    f"Seluruh raw data per frame berhasil disimpan di:\n{file_path}"
+                    f"Raw data sesi #{sesi_ke:03d} ({nama}) berhasil disimpan di:\n{file_path}"
                 )
 
             except Exception as e:

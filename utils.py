@@ -1,23 +1,28 @@
 import numpy as np
 from collections import deque
+import math
+import time
 from typing import Optional, Sequence, Tuple
 
+def calculate_ankle_angle(knee: Sequence[float], ankle: Sequence[float], foot_index: Sequence[float], baseline_angle: float = 104.9) -> Optional[float]:
+    """Calculate the ankle angle (knee-ankle-foot_index) in degrees.
 
-def calculate_ankle_angle(knee: Sequence[float], ankle: Sequence[float], heel: Sequence[float]) -> Optional[float]:
-    """Calculate the ankle angle (knee-ankle-heel) in degrees.
-
-    Uses the vector dot product between knee->ankle and heel->ankle.
-    Returns None when the calculation is invalid or landmarks are degenerate.
+    Aligned with clinical gait analysis:
+    - Neutral standing (Foot flat) is ~0 degrees.
+    - Dorsiflexion (Toe pointing up) is Positive (> 0).
+    - Plantar flexion (Toe pointing down) is Negative (< 0).
     """
     knee = np.asarray(knee, dtype=float)
     ankle = np.asarray(ankle, dtype=float)
-    heel = np.asarray(heel, dtype=float)
+    foot_index = np.asarray(foot_index, dtype=float) # Menggunakan ujung kaki
 
-    if knee.shape != ankle.shape or ankle.shape != heel.shape:
+    if knee.shape != ankle.shape or ankle.shape != foot_index.shape:
         return None
 
+    # Vektor v1: Ankle menunjuk ke Knee (Tulang Kering / Shin)
     v1 = knee - ankle
-    v2 = heel - ankle
+    # Vektor v2: Ankle menunjuk ke Foot Index (Telapak Kaki / Foot Axis)
+    v2 = foot_index - ankle
 
     norm_v1 = np.linalg.norm(v1)
     norm_v2 = np.linalg.norm(v2)
@@ -28,10 +33,66 @@ def calculate_ankle_angle(knee: Sequence[float], ankle: Sequence[float], heel: S
     cos_angle = np.clip(dot / (norm_v1 * norm_v2), -1.0, 1.0)
     angle_radians = np.arccos(cos_angle)
     
-    # ── UBAH DI SINI ────────────────────────────────────────────────────────
-    # Kurangi dengan 90.0 agar posisi siku-siku/netral menjadi 0 derajat
+    # Inner angle dalam derajat (Saat berdiri tegap nilainya sekitar 90 derajat)
     raw_angle = float(np.degrees(angle_radians))
-    return raw_angle - 90.0
+    
+    # ── UBAH RUMUS NORMALISASI DI SINI ──
+    # Jika kaki dorsiflexion (jari naik ke arah lutut), sudut raw_angle MENGEIL (< 90).
+    # Agar dorsiflexion menjadi Positif (sesuai gambar), rumusnya adalah 90.0 - raw_angle.
+    # Contoh Dorsi: 90.0 - 70.0 = +20.0 derajat.
+    # Contoh Plantar (jari turun): 90.0 - 120.0 = -30.0 derajat.
+    
+    return baseline_angle - raw_angle
+
+class OneEuroFilter:
+    """Adaptive low-pass filter designed for real-time human pose tracking."""
+    
+    def __init__(self, min_cutoff: float = 1.0, beta: float = 0.007, d_cutoff: float = 1.0):
+        self.min_cutoff = float(min_cutoff)
+        self.beta = float(beta)
+        self.d_cutoff = float(d_cutoff)
+        self.x_prev: Optional[float] = None
+        self.dx_prev: float = 0.0
+        self.t_prev: Optional[float] = None
+
+    def _alpha(self, cutoff: float, dt: float) -> float:
+        r = 2 * math.pi * cutoff * dt
+        return r / (r + 1)
+
+    def filter(self, value: Optional[float]) -> Optional[float]:
+        if value is None:
+            return None
+            
+        t_curr = time.time()
+        if self.t_prev is None or self.x_prev is None:
+            self.x_prev = value
+            self.t_prev = t_curr
+            return value
+
+        dt = t_curr - self.t_prev
+        if dt <= 0:
+            return self.x_prev
+
+        # Hitung magnitude turunan (kecepatan perubahan sudut)
+        d_value = (value - self.x_prev) / dt
+        
+        # Filter nilai turunan/kecepatan
+        alpha_d = self._alpha(self.d_cutoff, dt)
+        dx_curr = alpha_d * d_value + (1.0 - alpha_d) * self.dx_prev
+        
+        # Tentukan cutoff adaptif berdasarkan kecepatan gerakan
+        cutoff = self.min_cutoff + self.beta * abs(dx_curr)
+        
+        # Filter nilai utama (sudut ankle)
+        alpha = self._alpha(cutoff, dt)
+        x_curr = alpha * value + (1.0 - alpha) * self.x_prev
+
+        # Simpan state saat ini untuk frame berikutnya
+        self.x_prev = x_curr
+        self.dx_prev = dx_curr
+        self.t_prev = t_curr
+
+        return x_curr
 
 
 class MovingAverageSmoother:
