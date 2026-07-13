@@ -6,7 +6,7 @@ from utils import MovingAverageSmoother, calculate_ankle_angle
 
 
 class AnkleTracker:
-    def __init__(self, model_complexity: int = 2, smooth_landmarks: bool = True, smoothing_window: int = 5):
+    def __init__(self, model_complexity: int = 1, smooth_landmarks: bool = True, smoothing_window: int = 5):
         # model_complexity=2 (the heaviest of MediaPipe's 3 pose models) was
         # taking 60-150ms+ per frame on typical CPUs, far slower than the
         # ~20ms the old capture loop assumed. model_complexity=1 is a much

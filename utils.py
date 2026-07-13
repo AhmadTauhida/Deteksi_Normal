@@ -27,7 +27,11 @@ def calculate_ankle_angle(knee: Sequence[float], ankle: Sequence[float], heel: S
     dot = np.dot(v1, v2)
     cos_angle = np.clip(dot / (norm_v1 * norm_v2), -1.0, 1.0)
     angle_radians = np.arccos(cos_angle)
-    return float(np.degrees(angle_radians))
+    
+    # ── UBAH DI SINI ────────────────────────────────────────────────────────
+    # Kurangi dengan 90.0 agar posisi siku-siku/netral menjadi 0 derajat
+    raw_angle = float(np.degrees(angle_radians))
+    return raw_angle - 90.0
 
 
 class MovingAverageSmoother:

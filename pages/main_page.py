@@ -1,10 +1,15 @@
 """
 pages/main_page.py
-Main page — Daftar Responden dengan background putih clean bawaan asli.
-Mengambil data langsung dari MySQL db_ankle_analysis.
+Main page — Daftar Responden dengan search, filter, tabel, dan tombol tambah.
+Revisi 2: Nama center, badge status tanpa kotak, jenis kelamin tanpa ikon,
+tombol Monitoring lebih menonjol dan mudah dikenali.
+Revisi 3: Data diambil langsung dari MySQL (db_ankle_analysis) via DatabaseManager,
+tidak lagi memakai data dummy.
 """
 
 from __future__ import annotations
+
+from datetime import date, datetime
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -19,27 +24,28 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QComboBox,
     QAbstractItemView,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
-from datetime import date, datetime
+from PySide6.QtGui import QFont, QIcon
 
 from widgets.status_badge import StatusBadge
 from widgets.respondent_dialog import RespondentDialog
+
 # 🚀 IMPORT DATABASE MANAGER
 from database.database_manager import DatabaseManager
 
-# Konstanta kolom tabel
-COL_UID = 0
-COL_NAMA = 1
-COL_UMUR = 2
-COL_JK = 3
-COL_STATUS = 4
-COL_AKSI = 5
+COL_NAMA, COL_UMUR, COL_JK, COL_STATUS, COL_AKSI = 0, 1, 2, 3, 4
+
+# Lebar tetap kolom non-stretch (px) — cukup untuk konten terpanjang
+COL_UMUR_W   = 90    # "60 thn" → cukup 90
+COL_JK_W     = 130   # "Perempuan" (tanpa ikon) → 130
+COL_STATUS_W = 130   # "Tidak Normal" teks polos → 130
+COL_AKSI_W   = 190   # tombol Monitoring baru, lebih lega → 190 (cukup untuk ikon + teks + padding)
 
 
 def hitung_usia(tanggal_lahir_obj) -> int:
-    """Mengubah tanggal_lahir dari database menjadi umur dinamis tahun ini (2026)."""
+    """Mengubah tanggal_lahir dari database menjadi umur dinamis tahun ini."""
     if not tanggal_lahir_obj:
         return 0
     hari_ini = date.today()
@@ -57,220 +63,281 @@ def hitung_usia(tanggal_lahir_obj) -> int:
 
 class MainPage(QWidget):
     """
-    Main page — Menampilkan daftar responden dengan gaya clean background putih.
+    Halaman utama berisi daftar responden.
+
+    Signals:
+        navigate_to_monitoring (dict): Emitted when user clicks Monitoring button.
     """
 
     navigate_to_monitoring = Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        
-        # 🚀 INISIALISASI DATABASE MANAGER
+
+        # 🚀 Koneksi ke MySQL
         self.db = DatabaseManager()
-        
-        # Ambil data dari MySQL
         self._all_data: list[dict] = self.db.get_all_respondents()
 
         self._build_ui()
         self._populate_table(self._all_data)
 
-    # ── UI Construction (Mempertahankan Style Putih Bersih Asli) ──────────────
+    # ── UI Construction ─────────────────────────────────────────────────────
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(20)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(40, 32, 40, 28)
+        root.setSpacing(0)
 
-        # Header Section
-        header_layout = QHBoxLayout()
-        header_title = QLabel("Daftar Responden")
-        header_title.setFont(QFont("Segoe UI", 22, QFont.Bold))
-        header_title.setStyleSheet("color: #1E293B; background: transparent;")  # Teks gelap untuk bg putih
+        # ── Top Header ────────────────────────────────────────────────────
+        header_row = QHBoxLayout()
+        header_row.setSpacing(0)
 
-        add_btn = QPushButton("➕  Tambah Responden")
-        add_btn.setCursor(Qt.PointingHandCursor)
-        add_btn.setStyleSheet(
-            "QPushButton { background-color: #2D7DD2; color: white; font-weight: bold; "
-            "border-radius: 8px; padding: 10px 18px; font-size: 13px; border: none; }"
-            "QPushButton:hover { background-color: #1F61A9; }"
+        left_col = QVBoxLayout()
+        left_col.setSpacing(5)
+
+        breadcrumb = QLabel("🦶  Bionic Foot  /  Daftar Responden")
+        breadcrumb.setStyleSheet(
+            "font-size: 12px; color: #9AA3B8; background: transparent; font-weight: 500;"
         )
-        add_btn.clicked.connect(self._on_add_clicked)
+        title = QLabel("Daftar Responden")
+        title.setObjectName("PageTitle")
+        subtitle = QLabel("Kelola dan pantau data responden pengukuran sudut ankle.")
+        subtitle.setObjectName("PageSubtitle")
 
-        header_layout.addWidget(header_title)
-        header_layout.addStretch()
-        header_layout.addWidget(add_btn)
-        layout.addLayout(header_layout)
+        left_col.addWidget(breadcrumb)
+        left_col.addWidget(title)
+        left_col.addWidget(subtitle)
+        header_row.addLayout(left_col)
+        header_row.addStretch()
 
-        # Filter & Search Controls Frame (Style Putih Clean)
-        filter_frame = QFrame()
-        filter_frame.setStyleSheet(
-            "QFrame { background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; }"
-        )
-        filter_layout = QHBoxLayout(filter_frame)
-        filter_layout.setContentsMargins(16, 12, 16, 12)
-        filter_layout.setSpacing(14)
+        # Tambah Responden button — wide enough to show full text
+        self.add_btn = QPushButton("＋  Tambah Responden")
+        self.add_btn.setObjectName("PrimaryBtn")
+        self.add_btn.setFixedHeight(44)
+        self.add_btn.setMinimumWidth(180)
+        self.add_btn.setCursor(Qt.PointingHandCursor)
+        self.add_btn.clicked.connect(self._open_add_dialog)
+        header_row.addWidget(self.add_btn)
+
+        root.addLayout(header_row)
+        root.addSpacing(28)
+
+        # ── Toolbar: Search + Filter ──────────────────────────────────────
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(12)
 
         self.search_bar = QLineEdit()
+        self.search_bar.setObjectName("SearchBar")
         self.search_bar.setPlaceholderText("🔍  Cari nama responden...")
-        self.search_bar.setStyleSheet(
-            "QLineEdit { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; "
-            "border-radius: 6px; padding: 8px 12px; font-size: 13px; }"
-            "QLineEdit:focus { border: 1px solid #2D7DD2; }"
-        )
+        self.search_bar.setFixedHeight(42)
+        self.search_bar.setMinimumWidth(300)
         self.search_bar.textChanged.connect(self._apply_filters)
+        toolbar.addWidget(self.search_bar)
 
+        filter_label = QLabel("Filter Status:")
+        filter_label.setStyleSheet(
+            "color: #6B7A99; font-size: 13px; background: transparent;"
+        )
         self.filter_combo = QComboBox()
+        self.filter_combo.setObjectName("FilterCombo")
+        self.filter_combo.setFixedHeight(42)
         self.filter_combo.addItems(["Semua Status", "Normal", "Tidak Normal"])
-        self.filter_combo.setStyleSheet(
-            "QComboBox { background-color: #FFFFFF; color: #1E293B; border: 1px solid #CBD5E1; "
-            "border-radius: 6px; padding: 7px 12px; font-size: 13px; min-width: 140px; }"
+        self.filter_combo.currentIndexChanged.connect(self._apply_filters)
+
+        toolbar.addWidget(filter_label)
+        toolbar.addWidget(self.filter_combo)
+        toolbar.addStretch()
+
+        self.count_label = QLabel()
+        self.count_label.setStyleSheet(
+            "color: #9AA3B8; font-size: 12px; background: transparent;"
         )
-        self.filter_combo.currentTextChanged.connect(self._apply_filters)
+        toolbar.addWidget(self.count_label)
 
-        filter_layout.addWidget(self.search_bar, stretch=1)
-        filter_layout.addWidget(self.filter_combo)
-        layout.addWidget(filter_frame)
+        root.addLayout(toolbar)
+        root.addSpacing(16)
 
-        # Table Section (Style Putih Clean)
+        # ── Table ─────────────────────────────────────────────────────────
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["UID", "Nama", "Usia", "Jenis Kelamin", "Status Ankle", "Aksi"])
-        
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setFocusPolicy(Qt.NoFocus)
-        self.table.setAlternatingRowColors(True)
-
-        self.table.setStyleSheet(
-            "QTableWidget { background-color: #FFFFFF; color: #334155; gridline-color: #E2E8F0; "
-            "border: 1px solid #E2E8F0; border-radius: 12px; font-size: 13px; alternate-background-color: #F8FAFC; }"
-            "QHeaderView::section { background-color: #F1F5F9; color: #475569; font-weight: bold; "
-            "padding: 12px; border: none; border-bottom: 2px solid #E2E8F0; font-size: 12px; }"
-            "QTableWidget::item { padding: 12px; }"
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(
+            ["Nama Responden", "Umur", "Jenis Kelamin", "Status", "Aksi"]
         )
 
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(COL_UID, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(COL_NAMA, QHeaderView.Stretch)
-        header.setSectionResizeMode(COL_UMUR, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(COL_JK, QHeaderView.ResizeToContents)
+        hdr = self.table.horizontalHeader()
+        hdr.setHighlightSections(False)
+        # Header tetap center supaya konsisten dengan isi kolom
+        hdr.setDefaultAlignment(Qt.AlignCenter)
 
-        # PENTING: kolom Status & Aksi berisi cell widget (badge/tombol), bukan teks biasa.
-        # ResizeToContents tidak reliable untuk cell widget karena sizeHint() widget
-        # belum ter-compute saat kolom pertama kali dibuat, sehingga kolom bisa
-        # collapse ke lebar ~0 dan widget jadi tidak terlihat. Gunakan lebar tetap.
-        header.setSectionResizeMode(COL_STATUS, QHeaderView.Fixed)
-        self.table.setColumnWidth(COL_STATUS, 150)
-        header.setSectionResizeMode(COL_AKSI, QHeaderView.Fixed)
-        self.table.setColumnWidth(COL_AKSI, 190)
+        # Kolom Nama: mengisi sisa ruang
+        hdr.setSectionResizeMode(COL_NAMA, QHeaderView.Stretch)
+
+        # Kolom lain: lebar tetap yang cukup
+        for col, w in [
+            (COL_UMUR,   COL_UMUR_W),
+            (COL_JK,     COL_JK_W),
+            (COL_STATUS, COL_STATUS_W),
+            (COL_AKSI,   COL_AKSI_W),
+        ]:
+            hdr.setSectionResizeMode(col, QHeaderView.Fixed)
+            self.table.setColumnWidth(col, w)
 
         self.table.verticalHeader().setVisible(False)
-        layout.addWidget(self.table)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setFocusPolicy(Qt.NoFocus)
+        self.table.verticalHeader().setDefaultSectionSize(60)
 
-    # ── Table Population ──────────────────────────────────────────────────────
-    def _populate_table(self, data_list: list[dict]):
+        root.addWidget(self.table, stretch=1)
+
+        # ── Summary Footer ────────────────────────────────────────────────
+        root.addSpacing(12)
+        footer = QHBoxLayout()
+        self.total_label = QLabel()
+        self.total_label.setStyleSheet(
+            "color: #9AA3B8; font-size: 12px; background: transparent;"
+        )
+        footer.addWidget(self.total_label)
+        footer.addStretch()
+        root.addLayout(footer)
+
+    # ── Data Handling ────────────────────────────────────────────────────────
+    def _populate_table(self, data: list[dict]):
         self.table.setRowCount(0)
-        self.table.setRowCount(len(data_list))
+        for row_data in data:
+            self._insert_row(row_data)
 
-        for row, data in enumerate(data_list):
-            self.table.setRowHeight(row, 56)
+        n = len(data)
+        self.count_label.setText(f"Menampilkan {n} responden")
 
-            # Normalisasi Key dari Database agar match dengan kebutuhan komponen UI
-            uid = data.get("uid", "")
-            nama = data.get("nama", "")
-            tgl_lahir = data.get("tanggal_lahir")
-            usia = hitung_usia(tgl_lahir)
-            jk = data.get("jenis_kelamin", "")
-            status_str = data.get("status", "Normal")
+        total    = len(self._all_data)
+        normal   = sum(1 for d in self._all_data if d.get("status") == "Normal")
+        abnormal = total - normal
+        self.total_label.setText(
+            f"Total: {total}  •  Normal: {normal}  •  Tidak Normal: {abnormal}"
+        )
 
-            # 1. Kolom UID
-            uid_item = QTableWidgetItem(str(uid))
-            uid_item.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(row, COL_UID, uid_item)
+    def _insert_row(self, data: dict):
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        self.table.setRowHeight(row, 60)
 
-            # 2. Kolom Nama
-            self.table.setItem(row, COL_NAMA, QTableWidgetItem(nama))
+        uid       = data.get("uid", "")
+        nama      = data.get("nama", "")
+        umur      = hitung_usia(data.get("tanggal_lahir"))
+        jk        = data.get("jenis_kelamin", "")
+        status    = data.get("status", "Normal")
 
-            # 3. Kolom Usia
-            usia_text = f"{usia} tahun" if usia > 0 else "—"
-            usia_item = QTableWidgetItem(usia_text)
-            usia_item.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(row, COL_UMUR, usia_item)
+        # ── Nama (center, bukan rata kiri) ──────────────────────────────
+        nama_item = QTableWidgetItem(nama)
+        nama_item.setFont(QFont("Segoe UI", 13, QFont.Medium))
+        nama_item.setTextAlignment(Qt.AlignCenter)
+        nama_item.setData(Qt.UserRole, data)
+        nama_item.setToolTip(nama)
+        self.table.setItem(row, COL_NAMA, nama_item)
 
-            # 4. Kolom Jenis Kelamin
-            jk_item = QTableWidgetItem(jk)
-            jk_item.setTextAlignment(Qt.AlignCenter)
-            self.table.setItem(row, COL_JK, jk_item)
+        # ── Umur ─────────────────────────────────────────────────────────
+        umur_text = f"{umur} thn" if umur > 0 else "—"
+        umur_item = QTableWidgetItem(umur_text)
+        umur_item.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(row, COL_UMUR, umur_item)
 
-            # 5. Kolom Status Ankle (SEKARANG MUNCUL SEMPURNA)
-            badge_container = QWidget()
-            badge_container.setStyleSheet("background: transparent;")
-            badge_layout = QHBoxLayout(badge_container)
-            badge_layout.setContentsMargins(6, 6, 6, 6)
-            badge_layout.setAlignment(Qt.AlignCenter)
+        # ── Jenis Kelamin (teks polos, tanpa ikon ♂/♀) ───────────────────
+        jk_item = QTableWidgetItem(jk)
+        jk_item.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(row, COL_JK, jk_item)
 
-            # Memastikan format data dikirim ke StatusBadge dengan benar
-            badge = StatusBadge(status_str)
-            badge.setMinimumWidth(110)
-            badge_layout.addWidget(badge)
-            self.table.setCellWidget(row, COL_STATUS, badge_container)
+        # ── Status (teks berwarna polos, tanpa kotak/border) ─────────────
+        badge = StatusBadge(status)
+        badge_container = QWidget()
+        badge_container.setStyleSheet("background: transparent;")
+        bc_layout = QHBoxLayout(badge_container)
+        bc_layout.setContentsMargins(0, 0, 0, 0)
+        bc_layout.addWidget(badge, alignment=Qt.AlignCenter)
+        self.table.setCellWidget(row, COL_STATUS, badge_container)
 
-            # 6. Kolom Aksi (SEKARANG MUNCUL SEMPURNA)
-            monitor_btn = QPushButton("Buka Sesi Monitoring  ➔")
-            monitor_btn.setCursor(Qt.PointingHandCursor)
-            monitor_btn.setMinimumWidth(170)
-            monitor_btn.setStyleSheet(
-                "QPushButton { background-color: #10B981; color: white; font-weight: bold; "
-                "border: none; border-radius: 6px; font-size: 11px; padding: 6px 14px; }"
-                "QPushButton:hover { background-color: #059669; }"
-            )
-
-            btn_container = QWidget()
-            btn_container.setStyleSheet("background: transparent;")
-            btn_layout = QHBoxLayout(btn_container)
-            btn_layout.setContentsMargins(8, 6, 8, 6)
-            btn_layout.addWidget(monitor_btn)
-            self.table.setCellWidget(row, COL_AKSI, btn_container)
-            
-            # Format data terstandarisasi untuk dilempar ke monitoring_page.py
-            monitor_data = {
-                "uid": uid,
-                "nama": nama,
-                "umur": usia,
-                "jenis_kelamin": jk,
-                "status": status_str
+        # ── Aksi: tombol Monitoring (lebih menonjol & mudah dikenali) ────
+        monitor_btn = QPushButton("▶  Monitoring")
+        monitor_btn.setObjectName("MonitorBtn")
+        monitor_btn.setCursor(Qt.PointingHandCursor)
+        monitor_btn.setFixedHeight(36)
+        monitor_btn.setFixedWidth(130)
+        monitor_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # Inline style sebagai jaminan tampilan (tidak bergantung penuh pada
+        # cascade QSS global, supaya tombol pasti terlihat solid & jelas
+        # sebagai tombol, bukan teks biasa).
+        monitor_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #3E6E63;
+                color: #FFFFFF;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 16px;
+                font-size: 13px;
+                font-weight: 700;
             }
-            monitor_btn.clicked.connect(lambda _, d=monitor_data: self._on_monitor_clicked(d))
+            QPushButton:hover {
+                background-color: #335A51;
+            }
+            QPushButton:pressed {
+                background-color: #24413B;
+            }
+            """
+        )
 
-    # ── Actions ──────────────────────────────────────────────────────────────
-    def _on_add_clicked(self):
-        """Membuka Dialog input responden baru dan menyimpan ke MySQL."""
-        dialog = RespondentDialog(self)
-        if dialog.exec():
-            new_resp = dialog.get_data()
-            
-            # Buat format UID baru otomatis
-            new_uid = f"R{len(self._all_data) + 1:03d}"
-            
-            # Konversi umur masukan menjadi tanggal lahir perkiraan (Tahun 2026 - Umur)
-            tahun_lahir = 2026 - int(new_resp.get("Umur", new_resp.get("umur", 0)))
-            tanggal_lahir_formatted = f"{tahun_lahir}-01-01"
+        btn_container = QWidget()
+        btn_container.setStyleSheet("background: transparent;")
+        btn_layout = QHBoxLayout(btn_container)
+        btn_layout.setContentsMargins(6, 0, 6, 0)
+        btn_layout.addWidget(monitor_btn, alignment=Qt.AlignCenter)
+        self.table.setCellWidget(row, COL_AKSI, btn_container)
 
-            # Simpan ke MySQL via DatabaseManager
-            berhasil = self.db.add_respondent(
-                uid=new_uid,
-                nama=new_resp.get("Nama", new_resp.get("nama", "")),
-                tanggal_lahir=tanggal_lahir_formatted,
-                jenis_kelamin=new_resp.get("Jenis Kelamin", new_resp.get("jenis_kelamin", "")),
-                status=new_resp.get("Status", new_resp.get("status", "Normal"))
-            )
-            
-            if berhasil:
-                self._all_data = self.db.get_all_respondents()
-                self._apply_filters()
+        # Payload untuk monitoring_page.py — key HARUS lowercase supaya
+        # cocok dengan monitoring_page.set_respondent() yang membaca
+        # data.get("nama"/"umur"/"jenis_kelamin"/"status").
+        monitor_data = {
+            "uid": uid,
+            "nama": nama,
+            "umur": umur,
+            "jenis_kelamin": jk,
+            "status": status,
+        }
+        monitor_btn.clicked.connect(lambda _, d=monitor_data: self._on_monitor_clicked(d))
+
+    def add_respondent(self, data: dict):
+        """
+        Callback dari RespondentDialog.respondent_added.
+        Simpan responden baru ke MySQL, lalu refresh tabel dari database
+        (bukan sekadar append ke list lokal) supaya UID & data selalu
+        sinkron dengan sumber kebenaran (database).
+        """
+        nama          = data.get("nama", "")
+        tanggal_lahir = data.get("tanggal_lahir", "")
+        jk            = data.get("jenis_kelamin", "")
+        status        = data.get("status", "Normal")
+
+        new_uid = f"R{len(self._all_data) + 1:03d}"
+
+        berhasil = self.db.add_respondent(
+            uid=new_uid,
+            nama=nama,
+            tanggal_lahir=tanggal_lahir,
+            jenis_kelamin=jk,
+            status=status,
+        )
+
+        if berhasil:
+            self._all_data = self.db.get_all_respondents()
+            self._apply_filters()
+        else:
+            print("[MainPage] Gagal menyimpan responden baru ke database.")
 
     # ── Filters ──────────────────────────────────────────────────────────────
     def _apply_filters(self):
-        query = self.search_bar.text().strip().lower()
+        query         = self.search_bar.text().strip().lower()
         status_filter = self.filter_combo.currentText()
 
         filtered = [
@@ -283,3 +350,9 @@ class MainPage(QWidget):
     # ── Navigation ────────────────────────────────────────────────────────────
     def _on_monitor_clicked(self, data: dict):
         self.navigate_to_monitoring.emit(data)
+
+    # ── Dialog ────────────────────────────────────────────────────────────────
+    def _open_add_dialog(self):
+        dlg = RespondentDialog(self)
+        dlg.respondent_added.connect(self.add_respondent)
+        dlg.exec()

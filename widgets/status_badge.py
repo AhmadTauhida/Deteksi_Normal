@@ -1,6 +1,7 @@
 """
 widgets/status_badge.py
-Reusable colored badge for Normal / Tidak Normal status.
+Reusable status label for Normal / Tidak Normal.
+Revisi: tampilan teks polos berwarna, TANPA kotak/border/background pill.
 """
 
 from PySide6.QtWidgets import QLabel
@@ -9,7 +10,7 @@ from PySide6.QtCore import Qt
 
 class StatusBadge(QLabel):
     """
-    A QLabel styled as a colored pill badge.
+    A QLabel showing colored plain text for status (no box/border).
 
     Args:
         status (str): "Normal" or "Tidak Normal"
@@ -24,46 +25,20 @@ class StatusBadge(QLabel):
 
     # ------------------------------------------------------------------
     def set_status(self, status: str):
-        """Update the badge text and visual style."""
+        """Update the label text and visual style."""
         self._status = status
         self.setText(status)
 
         is_normal = status.strip().lower() == "normal"
 
         if self._large:
-            self.setObjectName("BadgeNormalLarge" if is_normal else "BadgeAbnormalLarge")
-            font_size = "13px"
-            padding = "6px 16px"
+            self.setObjectName("StatusTextNormalLarge" if is_normal else "StatusTextAbnormalLarge")
         else:
-            self.setObjectName("BadgeNormal" if is_normal else "BadgeAbnormal")
-            font_size = "11px"
-            padding = "4px 12px"
+            self.setObjectName("StatusTextNormal" if is_normal else "StatusTextAbnormal")
 
-        # Inline styling: TIDAK bergantung pada QSS global/eksternal.
-        # Kalau tema aplikasi berubah atau stylesheet global belum/tidak
-        # dimuat, badge ini tetap terlihat karena warnanya sudah "dibakar"
-        # langsung ke widget (setStyleSheet widget-level selalu punya
-        # prioritas lebih tinggi daripada QSS di level QApplication).
-        if is_normal:
-            bg_color = "#D1FAE5"
-            text_color = "#059669"
-        else:
-            bg_color = "#FEE2E2"
-            text_color = "#DC2626"
-
-        self.setStyleSheet(
-            f"""
-            QLabel {{
-                background-color: {bg_color};
-                color: {text_color};
-                border-radius: 10px;
-                padding: {padding};
-                font-size: {font_size};
-                font-weight: 600;
-            }}
-            """
-        )
-
+        # Force style refresh after objectName change
+        self.style().unpolish(self)
+        self.style().polish(self)
         self.update()
 
     # ------------------------------------------------------------------

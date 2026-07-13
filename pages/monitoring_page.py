@@ -1,10 +1,13 @@
 """
 pages/monitoring_page.py
-Monitoring page — live camera placeholder, control buttons, metric cards,
-respondent info header.
+Monitoring page — layout direvisi mengikuti referensi.
+Murni berfungsi sebagai sistem perekaman Data Logger per frame ke MySQL.
 """
 
 from __future__ import annotations
+
+import csv
+from datetime import datetime
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -16,34 +19,31 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QSizePolicy,
     QScrollArea,
-    QGridLayout,
-    QSpacerItem,
+    QFileDialog,
+    QMessageBox
 )
 from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QFont
 
 from app_camera import AnkleCameraWidget
 from widgets.metric_card import MetricCard
 from widgets.status_badge import StatusBadge
+from database.database_manager import DatabaseManager
 
 
 class MonitoringPage(QWidget):
-    """
-    Halaman monitoring pengukuran sudut ankle untuk satu responden.
-
-    Signals:
-        navigate_back: Emitted when user clicks "Kembali".
-    """
-
     navigate_back = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.db = DatabaseManager()
         self._respondent: dict = {}
         self._is_running = False
         self._elapsed_seconds = 0
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick_timer)
+        
+        self._session_angles = []
+        
         self._build_ui()
 
     # ── UI Construction ─────────────────────────────────────────────────────
@@ -59,12 +59,10 @@ class MonitoringPage(QWidget):
         root.setSpacing(0)
         scroll.setWidget(container)
 
-        # Outer layout (full page)
         page_layout = QVBoxLayout(self)
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.addWidget(scroll)
 
-        # ── Back + Breadcrumb ─────────────────────────────────────────────
         nav_row = QHBoxLayout()
         back_btn = QPushButton("←  Kembali ke Daftar Responden")
         back_btn.setObjectName("BackBtn")
@@ -75,7 +73,6 @@ class MonitoringPage(QWidget):
         root.addLayout(nav_row)
         root.addSpacing(8)
 
-        # ── Page Title ────────────────────────────────────────────────────
         page_title_row = QHBoxLayout()
         page_title_lbl = QLabel("Monitoring Pengukuran")
         page_title_lbl.setObjectName("PageTitle")
@@ -84,25 +81,22 @@ class MonitoringPage(QWidget):
         root.addLayout(page_title_row)
         root.addSpacing(20)
 
-        # ── Respondent Info Card ──────────────────────────────────────────
         info_card = QFrame()
         info_card.setObjectName("Card")
         info_layout = QHBoxLayout(info_card)
         info_layout.setContentsMargins(24, 18, 24, 18)
         info_layout.setSpacing(0)
 
-        # Avatar circle (drawn via stylesheet)
         self.avatar_lbl = QLabel("B")
         self.avatar_lbl.setFixedSize(52, 52)
         self.avatar_lbl.setAlignment(Qt.AlignCenter)
         self.avatar_lbl.setStyleSheet(
-            "background-color: #2D7DD2; color: #FFFFFF; border-radius: 26px;"
+            "background-color: #3E6E63; color: #FFFFFF; border-radius: 26px;"
             " font-size: 20px; font-weight: 700;"
         )
         info_layout.addWidget(self.avatar_lbl)
         info_layout.addSpacing(20)
 
-        # Respondent details
         details_col = QVBoxLayout()
         details_col.setSpacing(4)
         self.respondent_name = QLabel("—")
@@ -118,7 +112,6 @@ class MonitoringPage(QWidget):
         info_layout.addLayout(details_col)
         info_layout.addStretch()
 
-        # Status badge
         status_col = QVBoxLayout()
         status_col.setAlignment(Qt.AlignCenter)
         status_label = QLabel("STATUS")
@@ -130,14 +123,13 @@ class MonitoringPage(QWidget):
         info_layout.addLayout(status_col)
         info_layout.addSpacing(32)
 
-        # Session ID / timestamp info
         session_col = QVBoxLayout()
         session_col.setAlignment(Qt.AlignCenter)
         session_label_title = QLabel("SESI")
         session_label_title.setObjectName("SectionLabel")
         self.session_label = QLabel("#001")
         self.session_label.setStyleSheet(
-            "font-size: 20px; font-weight: 800; color: #2D7DD2; background: transparent;"
+            "font-size: 20px; font-weight: 800; color: #3E6E63; background: transparent;"
         )
         session_col.addWidget(session_label_title, alignment=Qt.AlignCenter)
         session_col.addSpacing(4)
@@ -147,206 +139,103 @@ class MonitoringPage(QWidget):
         root.addWidget(info_card)
         root.addSpacing(20)
 
-        # ── Main 2-column layout ──────────────────────────────────────────
-        main_cols = QHBoxLayout()
-        main_cols.setSpacing(20)
+        metrics_row = QHBoxLayout()
+        metrics_row.setSpacing(16)
 
-        # ── LEFT: Camera + Controls ───────────────────────────────────────
-        left_col = QVBoxLayout()
-        left_col.setSpacing(16)
+        self.card_sudut = MetricCard(label="Sudut Ankle", value="—", unit="°")
+        self.card_waktu = MetricCard(label="Waktu Tempuh", value="00:00", unit="s")
 
-        # Camera
-        cam_header = QLabel("Live Camera Feed")
-        cam_header.setStyleSheet(
-            "font-size: 13px; font-weight: 700; color: #6B7A99; background: transparent;"
-        )
-        left_col.addWidget(cam_header)
-
-        self.camera = AnkleCameraWidget(camera_source=1, embedded=True)
-        self.camera.setMinimumSize(460, 320)
-        self.camera.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.camera.angle_updated.connect(self._on_angle_updated)
-        left_col.addWidget(self.camera, stretch=1)
-
-        # ── Control Buttons ───────────────────────────────────────────────
-        ctrl_card = QFrame()
-        ctrl_card.setObjectName("Card")
-        ctrl_layout = QVBoxLayout(ctrl_card)
-        ctrl_layout.setContentsMargins(20, 16, 20, 16)
-        ctrl_layout.setSpacing(12)
-
-        ctrl_title = QLabel("KONTROL SESI")
-        ctrl_title.setObjectName("SectionLabel")
-        ctrl_layout.addWidget(ctrl_title)
-
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(10)
-
-        self.start_btn = QPushButton("▶  Start")
-        self.start_btn.setObjectName("SuccessBtn")
-        self.start_btn.setFixedHeight(44)
-        self.start_btn.setCursor(Qt.PointingHandCursor)
-        self.start_btn.clicked.connect(self._on_start)
-
-        self.stop_btn = QPushButton("⏹  Stop")
-        self.stop_btn.setObjectName("DangerBtn")
-        self.stop_btn.setFixedHeight(44)
-        self.stop_btn.setCursor(Qt.PointingHandCursor)
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.clicked.connect(self._on_stop)
-
-        self.submit_btn = QPushButton("✔  Submit")
-        self.submit_btn.setObjectName("PrimaryBtn")
-        self.submit_btn.setFixedHeight(44)
-        self.submit_btn.setCursor(Qt.PointingHandCursor)
-        self.submit_btn.setEnabled(False)
-        self.submit_btn.clicked.connect(self._on_submit)
-
-        self.export_btn = QPushButton("⬇  Export")
-        self.export_btn.setObjectName("GhostBtn")
-        self.export_btn.setFixedHeight(44)
-        self.export_btn.setCursor(Qt.PointingHandCursor)
-        self.export_btn.setEnabled(False)
-
-        btn_row.addWidget(self.start_btn)
-        btn_row.addWidget(self.stop_btn)
-        btn_row.addWidget(self.submit_btn)
-        btn_row.addWidget(self.export_btn)
-        ctrl_layout.addLayout(btn_row)
-
-        # Status indicator strip
-        self.status_strip = QLabel("● Sesi belum dimulai")
-        self.status_strip.setStyleSheet(
-            "font-size: 12px; color: #9AA3B8; background: transparent; padding-top: 4px;"
-        )
-        ctrl_layout.addWidget(self.status_strip)
-        left_col.addWidget(ctrl_card)
-
-        main_cols.addLayout(left_col, stretch=3)
-
-        # ── RIGHT: Metrics + Input ─────────────────────────────────────────
-        right_col = QVBoxLayout()
-        right_col.setSpacing(14)
-
-        metrics_title = QLabel("Data Pengukuran")
-        metrics_title.setStyleSheet(
-            "font-size: 13px; font-weight: 700; color: #6B7A99; background: transparent;"
-        )
-        right_col.addWidget(metrics_title)
-
-        # Sudut Ankle card (primary)
-        self.card_sudut = MetricCard(
-            label="Sudut Ankle",
-            value="23.4",
-            unit="°",
-            accent_color="#2D7DD2",
-        )
-        right_col.addWidget(self.card_sudut)
-
-        # Waktu Tempuh card
-        self.card_waktu = MetricCard(
-            label="Waktu Tempuh",
-            value="00:00",
-            unit="s",
-            accent_color="#8E44AD",
-        )
-        right_col.addWidget(self.card_waktu)
-
-        # ── Jarak input card ───────────────────────────────────────────────
         jarak_card = QFrame()
         jarak_card.setObjectName("Card")
         jarak_layout = QVBoxLayout(jarak_card)
         jarak_layout.setContentsMargins(20, 16, 20, 16)
-        jarak_layout.setSpacing(10)
+        jarak_layout.setSpacing(6)
 
         jarak_title = QLabel("JARAK TEMPUH")
         jarak_title.setObjectName("SectionLabel")
         jarak_layout.addWidget(jarak_title)
 
         jarak_input_row = QHBoxLayout()
-        jarak_input_row.setSpacing(10)
+        jarak_input_row.setSpacing(6)
         self.jarak_input = QDoubleSpinBox()
         self.jarak_input.setRange(0.0, 999.9)
         self.jarak_input.setSingleStep(0.1)
-        self.jarak_input.setValue(6.0)
+        self.jarak_input.setValue(0.0)
         self.jarak_input.setDecimals(1)
         self.jarak_input.setSuffix("  m")
-        self.jarak_input.setFixedHeight(44)
+        self.jarak_input.setFixedHeight(38)
         self.jarak_input.setStyleSheet(
-            "font-size: 18px; font-weight: 700; color: #1A7A45;"
+            "font-size: 15px; font-weight: 700; color: #1A2340;"
         )
-
         jarak_input_row.addWidget(self.jarak_input, stretch=1)
         jarak_layout.addLayout(jarak_input_row)
 
-        jarak_hint = QLabel("Input manual jarak lintasan pengujian")
-        jarak_hint.setStyleSheet("font-size: 11px; color: #B0BADA; background: transparent;")
-        jarak_layout.addWidget(jarak_hint)
-        right_col.addWidget(jarak_card)
+        metrics_row.addWidget(self.card_sudut, stretch=1)
+        metrics_row.addWidget(self.card_waktu, stretch=1)
+        metrics_row.addWidget(jarak_card, stretch=1)
 
-        # ── Gait Info mini cards ───────────────────────────────────────────
-        gait_card = QFrame()
-        gait_card.setObjectName("Card")
-        gait_layout = QVBoxLayout(gait_card)
-        gait_layout.setContentsMargins(20, 16, 20, 16)
-        gait_layout.setSpacing(12)
+        root.addLayout(metrics_row)
+        root.addSpacing(20)
 
-        gait_title_row = QHBoxLayout()
-        gait_title = QLabel("INFO GAIT")
-        gait_title.setObjectName("SectionLabel")
-        gait_title_row.addWidget(gait_title)
-        gait_layout.addLayout(gait_title_row)
-
-        grid = QGridLayout()
-        grid.setSpacing(10)
-        gait_items = [
-            ("Kadence", "—", "steps/min"),
-            ("Kecepatan", "—", "m/s"),
-            ("Langkah", "—", "steps"),
-            ("Fleksi Maks", "—", "°"),
-        ]
-        for i, (lbl, val, unit) in enumerate(gait_items):
-            mini = self._make_mini_stat(lbl, val, unit)
-            grid.addWidget(mini, i // 2, i % 2)
-        gait_layout.addLayout(grid)
-        right_col.addWidget(gait_card)
-
-        right_col.addStretch()
-        main_cols.addLayout(right_col, stretch=2)
-
-        root.addLayout(main_cols, stretch=1)
-
-    # ── Mini Stat Helper ─────────────────────────────────────────────────────
-    def _make_mini_stat(self, label: str, value: str, unit: str) -> QFrame:
-        f = QFrame()
-        f.setStyleSheet(
-            "QFrame { background-color: #F7F9FD; border: 1px solid #E8EDF5;"
-            " border-radius: 10px; }"
+        cam_header_row = QHBoxLayout()
+        cam_header = QLabel("Live Camera Feed")
+        cam_header.setStyleSheet(
+            "font-size: 13px; font-weight: 700; color: #6B7A99; background: transparent;"
         )
-        layout = QVBoxLayout(f)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(2)
+        cam_header_row.addWidget(cam_header)
+        cam_header_row.addStretch()
 
-        lbl = QLabel(label.upper())
-        lbl.setStyleSheet("font-size: 10px; font-weight: 700; color: #9AA3B8; background: transparent; letter-spacing: 0.5px;")
+        self.start_btn = QPushButton("▶  Start")
+        self.start_btn.setObjectName("SuccessBtn")
+        self.start_btn.setFixedHeight(40)
+        self.start_btn.setCursor(Qt.PointingHandCursor)
+        self.start_btn.clicked.connect(self._on_start)
 
-        val_row = QHBoxLayout()
-        val_row.setSpacing(4)
-        v = QLabel(value)
-        v.setStyleSheet("font-size: 20px; font-weight: 800; color: #1A2340; background: transparent;")
-        u = QLabel(unit)
-        u.setStyleSheet("font-size: 11px; color: #9AA3B8; background: transparent; padding-top: 6px;")
-        val_row.addWidget(v)
-        val_row.addWidget(u)
-        val_row.addStretch()
+        self.stop_btn = QPushButton("⏹  Stop")
+        self.stop_btn.setObjectName("DangerBtn")
+        self.stop_btn.setFixedHeight(40)
+        self.stop_btn.setCursor(Qt.PointingHandCursor)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self._on_stop)
 
-        layout.addWidget(lbl)
-        layout.addLayout(val_row)
-        return f
+        self.submit_btn = QPushButton("✔  Submit")
+        self.submit_btn.setObjectName("PrimaryBtn")
+        self.submit_btn.setFixedHeight(40)
+        self.submit_btn.setCursor(Qt.PointingHandCursor)
+        self.submit_btn.setEnabled(False)
+        self.submit_btn.clicked.connect(self._on_submit)
+
+        self.export_btn = QPushButton("⬇  Export")
+        self.export_btn.setObjectName("GhostBtn")
+        self.export_btn.setFixedHeight(40)
+        self.export_btn.setCursor(Qt.PointingHandCursor)
+        self.export_btn.setEnabled(True) 
+        self.export_btn.clicked.connect(self._on_export)
+
+        cam_header_row.addWidget(self.start_btn)
+        cam_header_row.addWidget(self.stop_btn)
+        cam_header_row.addWidget(self.submit_btn)
+        cam_header_row.addWidget(self.export_btn)
+
+        root.addLayout(cam_header_row)
+        root.addSpacing(8)
+
+        self.status_strip = QLabel("● Sesi belum dimulai")
+        self.status_strip.setStyleSheet(
+            "font-size: 11px; color: #9AA3B8; background: transparent;"
+        )
+        root.addWidget(self.status_strip)
+        root.addSpacing(10)
+
+        # ── Indeks Kamera (Silakan ubah angka 0 menjadi 2 jika perlu) ────────
+        self.camera = AnkleCameraWidget(camera_source=0, embedded=True)
+        self.camera.setMinimumSize(400, 380)
+        self.camera.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.camera.angle_updated.connect(self._on_angle_updated)
+        root.addWidget(self.camera, stretch=1)
 
     # ── Public API ───────────────────────────────────────────────────────────
     def set_respondent(self, data: dict):
-        """Load a respondent into this page."""
         self._respondent = data
         name = data.get("nama", "—")
         umur = data.get("umur", "—")
@@ -356,8 +245,7 @@ class MonitoringPage(QWidget):
         initial = name[0].upper() if name else "?"
         self.avatar_lbl.setText(initial)
 
-        is_normal = status == "Normal"
-        avatar_color = "#2D7DD2" if is_normal else "#E74C3C"
+        avatar_color = "#3E6E63" if status.lower() == "normal" else "#C0503F"
         self.avatar_lbl.setStyleSheet(
             f"background-color: {avatar_color}; color: #FFFFFF; border-radius: 26px;"
             " font-size: 20px; font-weight: 700;"
@@ -367,62 +255,184 @@ class MonitoringPage(QWidget):
         self.respondent_meta.setText(f"{umur} tahun  •  {jk}")
         self.status_badge.set_status(status)
 
-        # Reset state
         self._reset_session()
+        self.refresh_session_label()
+
+    def refresh_session_label(self):
+        uid = self._respondent.get("uid")
+        if uid:
+            total_sesi = self.db.get_session_count(uid)
+            sesi_sekarang = total_sesi + 1
+            self.session_label.setText(f"#{sesi_sekarang:03d}")
 
     # ── Session Control ───────────────────────────────────────────────────────
     def _on_start(self):
         self._is_running = True
         self._elapsed_seconds = 0
+        self._session_angles.clear()
+        
         self._timer.start(1000)
         self.camera.start_camera()
+        
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.submit_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
-        self.status_strip.setText("🔴  Sesi berjalan — merekam data pengukuran...")
+        
+        self.status_strip.setText("🔴 Sesi berjalan...")
         self.status_strip.setStyleSheet(
-            "font-size: 12px; color: #E74C3C; background: transparent; padding-top: 4px;"
+            "font-size: 11px; color: #C0503F; background: transparent;"
         )
-        # Sudut ankle sekarang di-update secara real-time lewat sinyal
-        # angle_updated dari AnkleCameraWidget (lihat _on_angle_updated).
         self.card_sudut.set_value("—")
 
     def _on_stop(self):
         self._is_running = False
         self._timer.stop()
+        
+        # Mencegah Blocking pada Main UI Thread
+        self.status_strip.setText("⏳ Menghentikan hardware kamera...")
+        self.status_strip.setStyleSheet("font-size: 11px; color: #D9A05B; background: transparent;")
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
+        
         self.camera.stop_camera()
+        
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.submit_btn.setEnabled(True)
-        self.export_btn.setEnabled(True)
-        self.status_strip.setText("✅  Sesi dihentikan. Data siap untuk di-submit.")
-        self.status_strip.setStyleSheet(
-            "font-size: 12px; color: #27AE60; background: transparent; padding-top: 4px;"
-        )
+        
+        if self._session_angles:
+            self.submit_btn.setEnabled(True)
+            self.export_btn.setEnabled(True)
+            self.status_strip.setText("✅ Sesi dihentikan. Siap di-submit ke database.")
+            self.status_strip.setStyleSheet(
+                "font-size: 11px; color: #4C8F5E; background: transparent;"
+            )
+        else:
+            self.submit_btn.setEnabled(False)
+            self.export_btn.setEnabled(True)
+            self.status_strip.setText("⚠️ Sesi dihentikan. Tidak ada data sudut terekam.")
+            self.status_strip.setStyleSheet(
+                "font-size: 11px; color: #D9A05B; background: transparent;"
+            )
 
     def _on_submit(self):
-        self.submit_btn.setEnabled(False)
-        self.status_strip.setText("📤  Data berhasil disubmit. Siap untuk sesi baru.")
-        self.status_strip.setStyleSheet(
-            "font-size: 12px; color: #2D7DD2; background: transparent; padding-top: 4px;"
+        uid = self._respondent.get("uid")
+        total_frames = len(self._session_angles)
+        
+        # Proteksi agar tidak ZeroDivisionError saat submit buffer kosong
+        if not uid or total_frames == 0:
+            self.status_strip.setText("❌ Error: Tidak ada frame sudut yang terekam.")
+            self.status_strip.setStyleSheet("font-size: 11px; color: #C0503F; background: transparent;")
+            return
+            
+        jarak = self.jarak_input.value()
+        # Proteksi nilai waktu agar tidak 0 (minimal 1 detik untuk kalkulasi logger per-frame)
+        waktu = max(1, self._elapsed_seconds) 
+        
+        avg_angle = sum(self._session_angles) / total_frames
+        max_angle = max(self._session_angles)
+        min_angle = min(self._session_angles)
+
+        sesi_ke = int(self.session_label.text().replace("#", ""))
+
+        # Proses Logging Database
+        sesi_berhasil = self.db.save_session_with_logs(
+            uid=uid,
+            sesi_ke=sesi_ke,
+            jarak=jarak,
+            waktu_total=waktu,
+            avg_angle=avg_angle,
+            max_angle=max_angle,
+            min_angle=min_angle,
+            list_sudut=self._session_angles
         )
+
+        if sesi_berhasil:
+            self.submit_btn.setEnabled(False)
+            self.refresh_session_label() 
+            self._session_angles.clear() # Reset logger bersih setelah submit
+            
+            self.status_strip.setText("📤 Sukses! Seluruh raw data logger sesi berhasil disimpan ke MySQL.")
+            self.status_strip.setStyleSheet("font-size: 11px; color: #3E6E63; background: transparent;")
+        else:
+            self.status_strip.setText("❌ Gagal memperbarui data logger ke database MySQL.")
+            self.status_strip.setStyleSheet("font-size: 11px; color: #C0503F; background: transparent;")
+            
         self.start_btn.setEnabled(True)
+        
+    def _on_export(self):
+        uid = self._respondent.get("uid")
+        nama = self._respondent.get("nama", "Responden")
+        
+        if not uid:
+            QMessageBox.warning(self, "Peringatan", "Tidak ada responden yang aktif.")
+            return
+
+        raw_logs = self.db.get_raw_gait_logs(uid)
+        
+        if not raw_logs:
+            QMessageBox.information(self, "Info", f"Belum ada rekaman raw data logger untuk {nama} yang bisa diekspor.")
+            return
+
+        date_str = datetime.now().strftime("%Y%m%d")
+        safe_name = nama.replace(" ", "_")
+        default_filename = f"Raw_Gait_Logger_{safe_name}_{date_str}.csv"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Ekspor Raw Data Logger ke CSV",
+            default_filename,
+            "CSV Files (*.csv);;All Files (*)"
+        )
+
+        if file_path:
+            try:
+                with open(file_path, mode='w', newline='', encoding='utf-8') as file:
+                    writer = csv.writer(file, delimiter=',')
+                    
+                    writer.writerow([
+                        "UID Responden",
+                        "Nama Responden",
+                        "Sesi Ke-",
+                        "Frame Ke-",
+                        "Waktu Relatif (Detik)",
+                        "Sudut Ankle Terukur (°)",
+                        "Timestamp Perekaman"
+                    ])
+                    
+                    for log in raw_logs:
+                        writer.writerow([
+                            uid,
+                            nama,
+                            log.get('sesi_ke', ''),
+                            log.get('frame_ke', ''),
+                            f"{log.get('waktu_relatif', 0):.3f}",
+                            f"{log.get('sudut_ankle', 0):.1f}", 
+                            log.get('waktu_ambil', '')
+                        ])
+
+                self.status_strip.setText(f"✅ Raw data sukses diekspor ke: {file_path}")
+                self.status_strip.setStyleSheet("font-size: 11px; color: #3E6E63; background: transparent;")
+                QMessageBox.information(self, "Ekspor Berhasil", f"Seluruh raw data per frame berhasil disimpan di:\n{file_path}")
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error Ekspor", f"Terjadi kesalahan saat menulis file CSV:\n{str(e)}")
 
     def _reset_session(self):
         self._is_running = False
         self._elapsed_seconds = 0
+        self._session_angles.clear()
         self._timer.stop()
         self.camera.stop_camera()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.submit_btn.setEnabled(False)
-        self.export_btn.setEnabled(False)
+        self.export_btn.setEnabled(True)
         self.card_sudut.set_value("—")
         self.card_waktu.set_value("00:00")
         self.status_strip.setText("● Sesi belum dimulai")
         self.status_strip.setStyleSheet(
-            "font-size: 12px; color: #9AA3B8; background: transparent; padding-top: 4px;"
+            "font-size: 11px; color: #9AA3B8; background: transparent;"
         )
 
     def _tick_timer(self):
@@ -433,26 +443,13 @@ class MonitoringPage(QWidget):
 
     # ── Camera integration ──────────────────────────────────────────────────
     def _on_angle_updated(self, angle, side_label):
-        """Called every frame via AnkleCameraWidget.angle_updated.
-        Pushes the live ankle angle from pose_tracker.py into the metric card."""
         if angle is None:
             self.card_sudut.set_value("—")
         else:
             self.card_sudut.set_value(f"{angle:.1f}")
+            if self._is_running:
+                self._session_angles.append(angle)
 
     def _on_back_clicked(self):
-        """Make sure the camera thread is stopped before leaving this page,
-        since AnkleCameraWidget is a plain QWidget and won't get its own
-        closeEvent when this page is swapped out (e.g. in a QStackedWidget)."""
         self.camera.stop_camera()
         self.navigate_back.emit()
-
-    def stop_camera(self):
-        """Public passthrough so the host app (main window) can stop the
-        camera when the whole application is closing, e.g.:
-
-            def closeEvent(self, event):
-                self.monitoring_page.stop_camera()
-                super().closeEvent(event)
-        """
-        self.camera.stop_camera()
