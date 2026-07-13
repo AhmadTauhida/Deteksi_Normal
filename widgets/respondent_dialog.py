@@ -3,8 +3,10 @@ widgets/respondent_dialog.py
 Modal dialog untuk menambah responden baru.
 
 Revisi:
-- Diperbesar (550 × 580 min) agar seluruh elemen tampil penuh tanpa terpotong.
-- Radio button Jenis Kelamin & Status diganti dengan ToggleChip (segmented control).
+- Diperbesar (550 x 580 min) agar seluruh elemen tampil penuh tanpa terpotong.
+- ToggleChip diganti base class dari QAbstractButton -> QPushButton, karena
+  QAbstractButton tidak punya paintEvent bawaan sehingga stylesheet
+  (background/border) tidak pernah ter-render (invisible).
 """
 
 from PySide6.QtWidgets import (
@@ -18,17 +20,50 @@ from PySide6.QtWidgets import (
     QFrame,
     QButtonGroup,
     QWidget,
-    QAbstractButton,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIntValidator
 
 
-# ── ToggleChip ──────────────────────────────────────────────────────────────
-class ToggleChip(QAbstractButton):
+# ── SuffixLineEdit ────────────────────────────────────────────────────────────
+class SuffixLineEdit(QLineEdit):
+    """
+    QLineEdit dengan label suffix (mis. "tahun") yang tampil menempel
+    di dalam kotak, di sisi kanan — mirip suffix pada QSpinBox, tapi
+    tetap mempertahankan behaviour QLineEdit biasa (placeholder hilang
+    otomatis saat mulai mengetik, tanpa perlu hapus dulu).
+    """
+
+    def __init__(self, suffix_text: str, parent=None):
+        super().__init__(parent)
+        self._suffix_label = QLabel(suffix_text, self)
+        self._suffix_label.setStyleSheet(
+            "color: #9AA3B8; font-size: 13px; font-weight: 500; background: transparent;"
+        )
+        self._suffix_label.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._update_text_margin()
+
+    def _update_text_margin(self):
+        self._suffix_label.adjustSize()
+        margin = self._suffix_label.width() + 20
+        self.setTextMargins(0, 0, margin, 0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_suffix()
+
+    def _reposition_suffix(self):
+        self._suffix_label.adjustSize()
+        x = self.width() - self._suffix_label.width() - 14
+        y = (self.height() - self._suffix_label.height()) // 2
+        self._suffix_label.move(x, y)
+
+
+# -- ToggleChip ---------------------------------------------------------------
+class ToggleChip(QPushButton):
     """
     Tombol chip bergaya segmented control.
-    Menampilkan tanda centang (✓) dan background biru saat dipilih.
+    Menampilkan tanda centang (checkmark) dan background biru saat dipilih.
     Saat tidak dipilih: border outline saja.
     """
 
@@ -46,38 +81,38 @@ class ToggleChip(QAbstractButton):
     def _refresh_style(self):
         if self.isChecked():
             self.setStyleSheet(
-                "QAbstractButton {"
-                "  background-color: #2D7DD2;"
+                "QPushButton {"
+                "  background-color: #3E6E63;"
                 "  color: #FFFFFF;"
-                "  border: 2px solid #2D7DD2;"
+                "  border: 2px solid #3E6E63;"
                 "  border-radius: 10px;"
                 "  padding: 8px 20px;"
                 "  font-size: 13px;"
                 "  font-weight: 700;"
                 "  text-align: center;"
                 "}"
-                "QAbstractButton:hover {"
-                "  background-color: #2266B8;"
-                "  border-color: #2266B8;"
+                "QPushButton:hover {"
+                "  background-color: #335A51;"
+                "  border-color: #335A51;"
                 "}"
             )
-            self.setText(f"✓  {self._base_label()}")
+            self.setText(f"\u2713  {self._base_label()}")
         else:
             self.setStyleSheet(
-                "QAbstractButton {"
-                "  background-color: #FFFFFF;"
+                "QPushButton {"
+                "  background-color: #F8F9F6;"
                 "  color: #4A5568;"
-                "  border: 1.5px solid #C8D0E4;"
+                "  border: 1.5px solid #C7C4B7;"
                 "  border-radius: 10px;"
                 "  padding: 8px 20px;"
                 "  font-size: 13px;"
                 "  font-weight: 500;"
                 "  text-align: center;"
                 "}"
-                "QAbstractButton:hover {"
-                "  background-color: #EBF4FF;"
-                "  border-color: #2D7DD2;"
-                "  color: #2D7DD2;"
+                "QPushButton:hover {"
+                "  background-color: #E7F0ED;"
+                "  border-color: #3E6E63;"
+                "  color: #3E6E63;"
                 "}"
             )
             self.setText(self._base_label())
@@ -85,7 +120,7 @@ class ToggleChip(QAbstractButton):
     def _base_label(self) -> str:
         """Kembalikan label bersih tanpa prefix centang."""
         txt = self.text()
-        if txt.startswith("✓  "):
+        if txt.startswith("\u2713  "):
             return txt[3:]
         return txt
 
@@ -94,7 +129,7 @@ class ToggleChip(QAbstractButton):
         return self._base_label()
 
 
-# ── RespondentDialog ─────────────────────────────────────────────────────────
+# -- RespondentDialog ----------------------------------------------------------
 class RespondentDialog(QDialog):
     """
     Dialog input data responden baru.
@@ -123,11 +158,11 @@ class RespondentDialog(QDialog):
         card_layout.setContentsMargins(32, 28, 32, 28)
         card_layout.setSpacing(0)          # spacing diatur manual per section
 
-        # ── Header ──────────────────────────────────────────────────────
+        # -- Header ---------------------------------------------------------
         header_row = QHBoxLayout()
         header_row.setSpacing(14)
 
-        icon_lbl = QLabel("👤")
+        icon_lbl = QLabel("\U0001F464")
         icon_lbl.setFixedSize(44, 44)
         icon_lbl.setAlignment(Qt.AlignCenter)
         icon_lbl.setStyleSheet(
@@ -150,7 +185,7 @@ class RespondentDialog(QDialog):
         header_row.addLayout(title_col)
         header_row.addStretch()
 
-        close_btn = QPushButton("✕")
+        close_btn = QPushButton("\u2715")
         close_btn.setFixedSize(32, 32)
         close_btn.setStyleSheet(
             "QPushButton { background: #F0F2F8; border: none; border-radius: 16px;"
@@ -163,11 +198,11 @@ class RespondentDialog(QDialog):
         card_layout.addLayout(header_row)
         card_layout.addSpacing(20)
 
-        # ── Divider ──────────────────────────────────────────────────────
+        # -- Divider ----------------------------------------------------------
         card_layout.addWidget(self._divider())
         card_layout.addSpacing(22)
 
-        # ── Nama Lengkap ─────────────────────────────────────────────────
+        # -- Nama Lengkap -------------------------------------------------------
         card_layout.addWidget(self._field_label("Nama Lengkap"))
         card_layout.addSpacing(6)
 
@@ -178,28 +213,24 @@ class RespondentDialog(QDialog):
         card_layout.addWidget(self.nama_input)
         card_layout.addSpacing(18)
 
-        # ── Umur ─────────────────────────────────────────────────────────
+        # -- Umur -----------------------------------------------------------------
         card_layout.addWidget(self._field_label("Umur"))
         card_layout.addSpacing(6)
 
         umur_row = QHBoxLayout()
         umur_row.setSpacing(12)
 
-        self.umur_input = QSpinBox()
-        self.umur_input.setRange(1, 150)
-        self.umur_input.setValue(30)
-        self.umur_input.setSuffix("  tahun")
+        self.umur_input = SuffixLineEdit("tahun")
+        self.umur_input.setPlaceholderText("Masukkan umur")
+        self.umur_input.setValidator(QIntValidator(1, 150, self))
         self.umur_input.setFixedHeight(44)
-        self.umur_input.setMinimumWidth(160)
-        self.umur_input.setStyleSheet(
-            "font-size: 15px; font-weight: 600; color: #1A2340;"
-        )
+        self.umur_input.setMinimumWidth(200)
         umur_row.addWidget(self.umur_input)
         umur_row.addStretch()
         card_layout.addLayout(umur_row)
         card_layout.addSpacing(18)
 
-        # ── Jenis Kelamin (ToggleChip) ────────────────────────────────────
+        # -- Jenis Kelamin (ToggleChip) --------------------------------------------
         card_layout.addWidget(self._field_label("Jenis Kelamin"))
         card_layout.addSpacing(8)
 
@@ -222,7 +253,7 @@ class RespondentDialog(QDialog):
         card_layout.addLayout(jk_row)
         card_layout.addSpacing(18)
 
-        # ── Status Awal (ToggleChip) ──────────────────────────────────────
+        # -- Status Awal (ToggleChip) ------------------------------------------------
         card_layout.addWidget(self._field_label("Status Awal"))
         card_layout.addSpacing(8)
 
@@ -251,11 +282,11 @@ class RespondentDialog(QDialog):
         card_layout.addStretch()
         card_layout.addSpacing(22)
 
-        # ── Divider ──────────────────────────────────────────────────────
+        # -- Divider ----------------------------------------------------------
         card_layout.addWidget(self._divider())
         card_layout.addSpacing(20)
 
-        # ── Action buttons ────────────────────────────────────────────────
+        # -- Action buttons ------------------------------------------------------
         btn_row = QHBoxLayout()
         btn_row.setSpacing(12)
 
@@ -265,7 +296,7 @@ class RespondentDialog(QDialog):
         cancel_btn.setMinimumWidth(100)
         cancel_btn.clicked.connect(self.reject)
 
-        save_btn = QPushButton("💾  Simpan Responden")
+        save_btn = QPushButton("\U0001F4BE  Simpan Responden")
         save_btn.setObjectName("PrimaryBtn")
         save_btn.setFixedHeight(44)
         save_btn.setMinimumWidth(170)
@@ -278,7 +309,7 @@ class RespondentDialog(QDialog):
 
         outer.addWidget(card)
 
-    # ── Helpers ──────────────────────────────────────────────────────────────
+    # -- Helpers ----------------------------------------------------------------
     @staticmethod
     def _field_label(text: str) -> QLabel:
         lbl = QLabel(text)
@@ -293,12 +324,12 @@ class RespondentDialog(QDialog):
         d.setObjectName("HDivider")
         return d
 
-    # ── Chip color overrides ──────────────────────────────────────────────────
+    # -- Chip color overrides --------------------------------------------------------
     def _style_abnormal_chip(self, checked: bool):
         """Chip 'Tidak Normal' tampil merah saat aktif."""
         if checked:
             self.chip_abnormal.setStyleSheet(
-                "QAbstractButton {"
+                "QPushButton {"
                 "  background-color: #E74C3C;"
                 "  color: #FFFFFF;"
                 "  border: 2px solid #E74C3C;"
@@ -307,9 +338,9 @@ class RespondentDialog(QDialog):
                 "  font-size: 13px;"
                 "  font-weight: 700;"
                 "}"
-                "QAbstractButton:hover { background-color: #C0392B; border-color: #C0392B; }"
+                "QPushButton:hover { background-color: #C0392B; border-color: #C0392B; }"
             )
-            self.chip_abnormal.setText(f"✓  Tidak Normal")
+            self.chip_abnormal.setText("\u2713  Tidak Normal")
         else:
             # Kembalikan ke style default (tidak aktif) via _refresh_style
             self.chip_abnormal._refresh_style()
@@ -318,7 +349,7 @@ class RespondentDialog(QDialog):
         """Pastikan chip 'Normal' selalu biru saat aktif."""
         self.chip_normal._refresh_style()
 
-    # ── Save ─────────────────────────────────────────────────────────────────
+    # -- Save -------------------------------------------------------------------
     def _save(self):
         nama = self.nama_input.text().strip()
         if not nama:
@@ -326,12 +357,25 @@ class RespondentDialog(QDialog):
                 "border: 2px solid #E74C3C; border-radius: 8px; padding: 9px 12px;"
                 " background: #FFF6F6; font-size: 14px;"
             )
-            self.nama_input.setPlaceholderText("⚠  Nama tidak boleh kosong!")
+            self.nama_input.setPlaceholderText("Nama tidak boleh kosong!")
             self.nama_input.setFocus()
             return
 
+        umur_text = self.umur_input.text().strip()
+        if not umur_text:
+            self.umur_input.setStyleSheet(
+                "border: 2px solid #E74C3C; border-radius: 8px; padding: 9px 12px;"
+                " background: #FFF6F6; font-size: 15px; font-weight: 600; color: #1A2340;"
+            )
+            self.umur_input.setPlaceholderText("Umur wajib diisi!")
+            self.umur_input.setFocus()
+            return
+
+        umur = int(umur_text)
+
         # Reset error style
         self.nama_input.setStyleSheet("")
+        self.umur_input.setStyleSheet("")
 
         jk     = self.chip_laki.value() if self._jk_group.checkedId() == 0 else self.chip_perempuan.value()
         status = self.chip_normal.value() if self._status_group.checkedId() == 0 else self.chip_abnormal.value()
@@ -339,7 +383,7 @@ class RespondentDialog(QDialog):
         self.respondent_added.emit(
             {
                 "nama":          nama,
-                "umur":          self.umur_input.value(),
+                "umur":          umur,
                 "jenis_kelamin": jk,
                 "status":        status,
             }
