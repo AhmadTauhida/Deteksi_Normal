@@ -41,12 +41,14 @@ class MonitoringPage(QWidget):
         self._elapsed_seconds = 0
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick_timer)
-        
-        self._session_angles = []
-        
+
+        # Setiap elemen adalah tuple (sudut: float, waktu_ambil: datetime)
+        # waktu_ambil diambil tepat saat frame diterima di _on_angle_updated()
+        self._session_angles: list[tuple[float, datetime]] = []
+
         self._build_ui()
 
-    # ── UI Construction ─────────────────────────────────────────────────────
+    # ── UI Construction ──────────────────────────────────────────────────────
     def _build_ui(self):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -209,7 +211,7 @@ class MonitoringPage(QWidget):
         self.export_btn.setObjectName("GhostBtn")
         self.export_btn.setFixedHeight(40)
         self.export_btn.setCursor(Qt.PointingHandCursor)
-        self.export_btn.setEnabled(True) 
+        self.export_btn.setEnabled(True)
         self.export_btn.clicked.connect(self._on_export)
 
         cam_header_row.addWidget(self.start_btn)
@@ -270,15 +272,15 @@ class MonitoringPage(QWidget):
         self._is_running = True
         self._elapsed_seconds = 0
         self._session_angles.clear()
-        
+
         self._timer.start(1000)
         self.camera.start_camera()
-        
+
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.submit_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
-        
+
         self.status_strip.setText("🔴 Sesi berjalan...")
         self.status_strip.setStyleSheet(
             "font-size: 11px; color: #C0503F; background: transparent;"
@@ -288,18 +290,22 @@ class MonitoringPage(QWidget):
     def _on_stop(self):
         self._is_running = False
         self._timer.stop()
-        
-        # Mencegah Blocking pada Main UI Thread
+
         self.status_strip.setText("⏳ Menghentikan hardware kamera...")
-        self.status_strip.setStyleSheet("font-size: 11px; color: #D9A05B; background: transparent;")
-        from PySide6.QtWidgets import QApplication
-        QApplication.processEvents()
-        
+        self.status_strip.setStyleSheet(
+            "font-size: 11px; color: #D9A05B; background: transparent;"
+        )
+
+        # Gunakan singleShot agar tidak blocking UI thread saat stop
+        QTimer.singleShot(0, self._finish_stop)
+
+    def _finish_stop(self):
+        """Diselesaikan di event loop berikutnya agar UI tidak freeze saat stop."""
         self.camera.stop_camera()
-        
+
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        
+
         if self._session_angles:
             self.submit_btn.setEnabled(True)
             self.export_btn.setEnabled(True)
@@ -318,24 +324,31 @@ class MonitoringPage(QWidget):
     def _on_submit(self):
         uid = self._respondent.get("uid")
         total_frames = len(self._session_angles)
-        
+
         # Proteksi agar tidak ZeroDivisionError saat submit buffer kosong
         if not uid or total_frames == 0:
             self.status_strip.setText("❌ Error: Tidak ada frame sudut yang terekam.")
-            self.status_strip.setStyleSheet("font-size: 11px; color: #C0503F; background: transparent;")
+            self.status_strip.setStyleSheet(
+                "font-size: 11px; color: #C0503F; background: transparent;"
+            )
             return
-            
+
         jarak = self.jarak_input.value()
-        # Proteksi nilai waktu agar tidak 0 (minimal 1 detik untuk kalkulasi logger per-frame)
-        waktu = max(1, self._elapsed_seconds) 
-        
-        avg_angle = sum(self._session_angles) / total_frames
-        max_angle = max(self._session_angles)
-        min_angle = min(self._session_angles)
+        # Proteksi nilai waktu agar tidak 0 (minimal 1 detik)
+        waktu = max(1, self._elapsed_seconds)
+
+        # Unpack tuple — pisahkan list sudut dari list timestamp untuk kalkulasi statistik
+        # _session_angles berisi list of (sudut: float, waktu_ambil: datetime)
+        angles_only = [sudut for sudut, _ in self._session_angles]
+
+        avg_angle = sum(angles_only) / total_frames
+        max_angle = max(angles_only)
+        min_angle = min(angles_only)
 
         sesi_ke = int(self.session_label.text().replace("#", ""))
 
-        # Proses Logging Database
+        # Kirim _session_angles (list of tuple) langsung ke database_manager
+        # untuk di-unpack dan disimpan bersama timestamp aktualnya
         sesi_berhasil = self.db.save_session_with_logs(
             uid=uid,
             sesi_ke=sesi_ke,
@@ -344,34 +357,43 @@ class MonitoringPage(QWidget):
             avg_angle=avg_angle,
             max_angle=max_angle,
             min_angle=min_angle,
-            list_sudut=self._session_angles
+            list_sudut=self._session_angles   # list of (float, datetime)
         )
 
         if sesi_berhasil:
             self.submit_btn.setEnabled(False)
-            self.refresh_session_label() 
-            self._session_angles.clear() # Reset logger bersih setelah submit
-            
-            self.status_strip.setText("📤 Sukses! Seluruh raw data logger sesi berhasil disimpan ke MySQL.")
-            self.status_strip.setStyleSheet("font-size: 11px; color: #3E6E63; background: transparent;")
+            self.refresh_session_label()
+            self._session_angles.clear()  # Reset logger bersih setelah submit
+
+            self.status_strip.setText(
+                "📤 Sukses! Seluruh raw data logger sesi berhasil disimpan ke MySQL."
+            )
+            self.status_strip.setStyleSheet(
+                "font-size: 11px; color: #3E6E63; background: transparent;"
+            )
         else:
             self.status_strip.setText("❌ Gagal memperbarui data logger ke database MySQL.")
-            self.status_strip.setStyleSheet("font-size: 11px; color: #C0503F; background: transparent;")
-            
+            self.status_strip.setStyleSheet(
+                "font-size: 11px; color: #C0503F; background: transparent;"
+            )
+
         self.start_btn.setEnabled(True)
-        
+
     def _on_export(self):
         uid = self._respondent.get("uid")
         nama = self._respondent.get("nama", "Responden")
-        
+
         if not uid:
             QMessageBox.warning(self, "Peringatan", "Tidak ada responden yang aktif.")
             return
 
         raw_logs = self.db.get_raw_gait_logs(uid)
-        
+
         if not raw_logs:
-            QMessageBox.information(self, "Info", f"Belum ada rekaman raw data logger untuk {nama} yang bisa diekspor.")
+            QMessageBox.information(
+                self, "Info",
+                f"Belum ada rekaman raw data logger untuk {nama} yang bisa diekspor."
+            )
             return
 
         date_str = datetime.now().strftime("%Y%m%d")
@@ -389,34 +411,52 @@ class MonitoringPage(QWidget):
             try:
                 with open(file_path, mode='w', newline='', encoding='utf-8') as file:
                     writer = csv.writer(file, delimiter=',')
-                    
+
+                    # Header CSV — waktu_relatif diganti waktu_ambil (timestamp aktual)
                     writer.writerow([
                         "UID Responden",
                         "Nama Responden",
                         "Sesi Ke-",
                         "Frame Ke-",
-                        "Waktu Relatif (Detik)",
+                        "Timestamp Frame",        # waktu aktual frame direkam
                         "Sudut Ankle Terukur (°)",
-                        "Timestamp Perekaman"
+                        "Timestamp Sesi Dibuat"   # waktu sesi pertama kali dibuat
                     ])
-                    
+
                     for log in raw_logs:
+                        # Konversi datetime ke string ISO jika belum berupa string
+                        waktu_frame = log.get('waktu_ambil', '')
+                        if hasattr(waktu_frame, 'strftime'):
+                            waktu_frame = waktu_frame.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+                        waktu_sesi = log.get('waktu_sesi', '')
+                        if hasattr(waktu_sesi, 'strftime'):
+                            waktu_sesi = waktu_sesi.strftime("%Y-%m-%d %H:%M:%S")
+
                         writer.writerow([
                             uid,
                             nama,
                             log.get('sesi_ke', ''),
                             log.get('frame_ke', ''),
-                            f"{log.get('waktu_relatif', 0):.3f}",
-                            f"{log.get('sudut_ankle', 0):.1f}", 
-                            log.get('waktu_ambil', '')
+                            waktu_frame,
+                            f"{log.get('sudut_ankle', 0):.1f}",
+                            waktu_sesi
                         ])
 
                 self.status_strip.setText(f"✅ Raw data sukses diekspor ke: {file_path}")
-                self.status_strip.setStyleSheet("font-size: 11px; color: #3E6E63; background: transparent;")
-                QMessageBox.information(self, "Ekspor Berhasil", f"Seluruh raw data per frame berhasil disimpan di:\n{file_path}")
-                
+                self.status_strip.setStyleSheet(
+                    "font-size: 11px; color: #3E6E63; background: transparent;"
+                )
+                QMessageBox.information(
+                    self, "Ekspor Berhasil",
+                    f"Seluruh raw data per frame berhasil disimpan di:\n{file_path}"
+                )
+
             except Exception as e:
-                QMessageBox.critical(self, "Error Ekspor", f"Terjadi kesalahan saat menulis file CSV:\n{str(e)}")
+                QMessageBox.critical(
+                    self, "Error Ekspor",
+                    f"Terjadi kesalahan saat menulis file CSV:\n{str(e)}"
+                )
 
     def _reset_session(self):
         self._is_running = False
@@ -441,14 +481,16 @@ class MonitoringPage(QWidget):
         seconds = self._elapsed_seconds % 60
         self.card_waktu.set_value(f"{minutes:02d}:{seconds:02d}")
 
-    # ── Camera integration ──────────────────────────────────────────────────
+    # ── Camera integration ───────────────────────────────────────────────────
     def _on_angle_updated(self, angle, side_label):
         if angle is None:
             self.card_sudut.set_value("—")
         else:
             self.card_sudut.set_value(f"{angle:.1f}")
             if self._is_running:
-                self._session_angles.append(angle)
+                # Simpan tuple (sudut, timestamp) — timestamp diambil tepat saat
+                # frame diterima di UI thread, bukan dihitung mundur saat submit
+                self._session_angles.append((angle, datetime.now()))
 
     def _on_back_clicked(self):
         self.camera.stop_camera()

@@ -57,6 +57,7 @@ class VideoThread(QtCore.QThread):
             self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            self.capture.set(cv2.CAP_PROP_FPS, 30)
             self.running = True
         else:
             print("[CAMERA DEBUG] ERROR: Seluruh indeks kamera gagal dibuka. Periksa izin privasi Windows atau kabel USB.")
