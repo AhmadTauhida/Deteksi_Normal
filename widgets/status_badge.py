@@ -32,12 +32,38 @@ class StatusBadge(QLabel):
 
         if self._large:
             self.setObjectName("BadgeNormalLarge" if is_normal else "BadgeAbnormalLarge")
+            font_size = "13px"
+            padding = "6px 16px"
         else:
             self.setObjectName("BadgeNormal" if is_normal else "BadgeAbnormal")
+            font_size = "11px"
+            padding = "4px 12px"
 
-        # Force style refresh after objectName change
-        self.style().unpolish(self)
-        self.style().polish(self)
+        # Inline styling: TIDAK bergantung pada QSS global/eksternal.
+        # Kalau tema aplikasi berubah atau stylesheet global belum/tidak
+        # dimuat, badge ini tetap terlihat karena warnanya sudah "dibakar"
+        # langsung ke widget (setStyleSheet widget-level selalu punya
+        # prioritas lebih tinggi daripada QSS di level QApplication).
+        if is_normal:
+            bg_color = "#D1FAE5"
+            text_color = "#059669"
+        else:
+            bg_color = "#FEE2E2"
+            text_color = "#DC2626"
+
+        self.setStyleSheet(
+            f"""
+            QLabel {{
+                background-color: {bg_color};
+                color: {text_color};
+                border-radius: 10px;
+                padding: {padding};
+                font-size: {font_size};
+                font-weight: 600;
+            }}
+            """
+        )
+
         self.update()
 
     # ------------------------------------------------------------------
